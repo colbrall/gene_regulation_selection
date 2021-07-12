@@ -1,0 +1,6 @@
+bin/train_predixcan/build_gene_models/__pycache__/
+*pyc
+*pdf
+*~
+*.out
+*.error
