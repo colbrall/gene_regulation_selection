@@ -2,11 +2,16 @@
 #
 # @author Laura Colbran 2021-07-16
 # utility script called by qx.jl. requires bcftools.
+# julia 1.5
 
 using ArgParse
+using Dates
 using GZip
 using StatsBase
 using LinearAlgebra
+
+BIN_COL = 3 #column in bin file that contains bin id
+GT_DELIM = "|" #splitter for genotypes in VCF
 
 function parseCommandLine()
     s = ArgParseSettings()
@@ -47,9 +52,9 @@ function parseCommandLine()
         "--betas","-b"
             nargs='*'
             help = "list of betas for SNPs in model"
-            arg_type = FLoat64
-        "--out_dir","-o"
-            help = "directory to save temp files to"
+            arg_type = Float64
+        "--out_path","-o"
+            help = "temp file to save gene to. idea is to concatenate all temp files once run is finished"
             arg_type = String
     end
     return parse_args(s)
@@ -133,7 +138,7 @@ function popDict(path::String)
 end
 
 # identifies matched sets of SNPs based on bins
-function matchSNPs(gene::String,snps::Array{String,1},bin_path::String,num_to_match::Int64)
+function matchSNPs(gene::String,snps::Array{String,1},bin_path::String,num_to_match::Int64,qx_path::String)
     target_bins = String[]
     bin_snps = Dict{String,Array{String,1}}()
     matched_snps = String[]
@@ -166,7 +171,8 @@ function matchSNPs(gene::String,snps::Array{String,1},bin_path::String,num_to_ma
         b_snps = bin_snps[bin][findall(x->!in(x,snps),bin_snps[bin])] #ensure we don't include the target snp
         matched_snps = vcat(matched_snps,sample(b_snps,num_to_match*count(isequal(bin),target_bins),replace=false))
     end
-    open("matched_snps.txt","a") do outf
+    out_path= "$(splitdir(qx_path)[1])/$(gene)_matched_snps.txt"
+    open(out_path,"a") do outf
         for snp in matched_snps
             write(outf,"$gene\t$snp\n")
         end
@@ -181,12 +187,10 @@ function calcFreq(ids::Array{String,1},gts::Array{String,1},pop_path::String,pop
     i = 1
     for pop in pop_tags
         pop_gts = [split(gt,":")[1] for gt in gts[findall(ind -> in(ind,pops[pop]),ids)]] #pull gts for inds in this pop
-        # pop_gts = pop_gts[findall(!isequal("./."),pop_gts)] # remove missing entries
-        pop_gts = pop_gts[findall(!isequal(".|."),pop_gts)] # remove missing entries
+        pop_gts = pop_gts[findall(!isequal(".$(GT_DELIM)."),pop_gts)] # remove missing entries
         alleles = Int64[]
         for gt in pop_gts
-            alleles = vcat(alleles,parse.(Int64,split(gt,"|")))
-            # alleles = vcat(alleles,parse.(Int64,split(gt,"/")))
+            alleles = vcat(alleles,parse.(Int64,split(gt,GT_DELIM)))
         end
         # handle multiallelic sites
         alleles[findall(!isequal(alt_gt),alleles)] .= 0
@@ -251,10 +255,14 @@ end
 
 function main()
     parsed_args = parseCommandLine()
-    if length(parsed_args["matched_snps"]) > 0
-        matched_snps = readMatch(parsed_args["matched_snps"],parsed_args["gene"])
+    println(parsed_args["gene"])
+    println(Dates.now())
+    qx_path = parsed_args["out_path"]
+    match_suffix = parsed_args["matched_snps"]
+    if isfile("$(splitdir(qx_path)[1])/$(gene)$(match_suffix)") > 0
+        matched_snps = readMatch("$(splitdir(qx_path)[1])/$(gene)$(match_suffix)",parsed_args["gene"])
     else
-        matched_snps = matchSNPs(parsed_args["gene"],parsed_args["snps"],parsed_args["num_match"])
+        matched_snps = matchSNPs(parsed_args["gene"],parsed_args["model_snps"],parsed_args["snps"],parsed_args["num_match"],qx_path)
     end
 
     snp_freqs,zero_inds = pullFreqs(parsed_args["model_snps"],parsed_args["pop_vcfs"],parsed_args["populations"],parsed_args["pop_tags"])
@@ -267,10 +275,12 @@ function main()
     matched_freqs = matched_freqs[:,setdiff(1:end, zero_inds)]  #remove all-zero-freq SNPs
 
     qx = Qx(snp_betas,snp_freqs,matched_freqs)
-    open(parsed_args["out_path"],"w") do outf
+    open(qx_path,"w") do outf
         num_snps = length(parsed_args["model_snps"])
-        write(outf,"$gene\t$(num_snps)\t$qx\n")
+        gene = parsed_args["gene"]
+        write(outf,"$(gene)\t$(num_snps)\t$qx\n")
     end
+    println(Dates.now())
 end
 
 main()
