@@ -57,23 +57,10 @@ function parseCommandLine()
     return parse_args(s)
 end
 
-# function coordinateID(rsids::Array{String,1})
-#     search_set = join(rsids,"\|")
-#     n = length(rsids)
-#     command = `zgrep -m $(n) -w $(search_set) $(DBSNP_FILE)`
-#     new_rs = String[]
-#     open(command) do inf
-#         for line in eachline(inf)
-#             l = split(chomp(line),"\t")
-#             gts = split(l[10],"/")
-#             id = "$(l[2])_$(l[4])_$(gts[1])_$(gts[2]_b38)_b38" #stringsplitting nonsense
-#             coord_ids = vcat(coord_ids,[id])
-#             new_rs = vcat(new_rs,l[5])
-#         end
-#     end
-# ## NEED TO FIGURE OUT HOW TO SORT BY ORIGINAL RSID ORDER
-#     return join(coord_ids," ")
-# end
+function coordinateID(rsids::Array{String,1})
+    # read in mapping file and pull correct IDs
+    return join(coord_ids," ")
+end
 
 # read in database, then for each gene pull snps and effect sizes
 function parseDB(path::String)
@@ -112,21 +99,23 @@ function QxByGene(db_path::String,match_path::String,bin_path::String,vcf_path::
     n = 1
     commands = String[]
     for gene in keys(genes)
-        # if n > 10 break end
+        if n > 10 break end
         if n%genes_per_job == 0
-            runBSUB(outdir,commands,n,genes_per_job)
+            # runBSUB(outdir,commands,n,genes_per_job)
             commands = String[]
         end
         snps = join([snp[1] for snp in genes[gene]]," ")
-        # if !in("_",snps[1]) #if IDs are not in coordinate ID form
-        #     snps = coordinateID([snp[1] for snp in genes[gene]])
-        # end
+        println(snps)
+        if !occursin("_",snps) #if IDs are not in coordinate ID form
+            snps = coordinateID([snp[1] for snp in genes[gene]])
+        end
+        println(snps)
         betas = join([snp[2] for snp in genes[gene]]," ")
         command = "julia ./bin/qx_per_gene.jl -g $(gene) -l $(snps) -b $(betas) -o $(outdir)$(gene)_qx.txt -s $(bin_path) -v '$(vcf_path)' -t $(pop_tags) -p $(pop_path) -n $(num_to_match)\n"
         commands = vcat(commands,[command])
         n+=1
     end
-    runBSUB(outdir,commands,n,length(commands)) #to catch the last few genes
+    # runBSUB(outdir,commands,n,length(commands)) #to catch the last few genes
 end
 
 function main()

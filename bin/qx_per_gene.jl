@@ -259,6 +259,7 @@ function main()
     println(Dates.now())
     qx_path = parsed_args["out_path"]
     match_suffix = parsed_args["matched_snps"]
+    gene = parsed_args["gene"]
     if isfile("$(splitdir(qx_path)[1])/$(gene)$(match_suffix)") > 0
         matched_snps = readMatch("$(splitdir(qx_path)[1])/$(gene)$(match_suffix)",parsed_args["gene"])
     else
@@ -277,7 +278,6 @@ function main()
     qx = Qx(snp_betas,snp_freqs,matched_freqs)
     open(qx_path,"w") do outf
         num_snps = length(parsed_args["model_snps"])
-        gene = parsed_args["gene"]
         write(outf,"$(gene)\t$(num_snps)\t$qx\n")
     end
     println(Dates.now())
