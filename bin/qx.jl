@@ -34,9 +34,9 @@ function parseCommandLine()
             arg_type = String
             required = true
         "--num_match","-n"
-            help = "number of neutral SNPs to pull to match each test SNP. Default 100"
+            help = "number of neutral SNPs to pull to match each test SNP"
             arg_type = Int64
-            default = 100
+            default = 10
         "--matched_snps","-m"
             help = "file with list of IDs of matched SNPs for run. if left empty, script will match SNPs itself using --snps option"
             arg_type =  String
@@ -52,7 +52,7 @@ function parseCommandLine()
         "--genes_per_job","-j"
             help = "number of genes to run per bsub job"
             arg_type = Int64
-            default = 10
+            default = 100
     end
     return parse_args(s)
 end
