@@ -52,7 +52,7 @@ function parseCommandLine()
         "--genes_per_job","-j"
             help = "number of genes to run per bsub job"
             arg_type = Int64
-            default = 100
+            default = 10
     end
     return parse_args(s)
 end
