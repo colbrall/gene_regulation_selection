@@ -11,7 +11,6 @@ using StatsBase
 using LinearAlgebra
 
 BIN_COL = 3 #column in bin file that contains bin id
-GT_DELIM = "|" #splitter for genotypes in VCF
 
 function parseCommandLine()
     s = ArgParseSettings()
@@ -24,7 +23,7 @@ function parseCommandLine()
             help = "path to file with ascertainment SNP AFs and any other bin info. assumes snp ids are in form chr_pos_ref_alt_b38"
             arg_type = String
             default = ""
-        "--pop_vcfs","-v"
+        "--pop_frqs","-f"
             help = "path to vcfs with population AFs for calculating Qx. Assumes that they are split by chr, and that you've put a * in for the chr number, and that they've been indexed by tabix"
             arg_type = String
             required = true
@@ -36,13 +35,9 @@ function parseCommandLine()
             help = "file with list of IDs of matched SNPs for run. if left empty, script will match SNPs itself using --snps option"
             arg_type =  String
             default = ""
-        "--populations","-p"
-            help = "tab-delim file with population assignments for all individuals in vcf files. assumes col1 is id, col2 is pop"
-            arg_type = String
-            required = true
         "--pop_tags","-t"
             nargs='*'
-            help = "list of population INFO tags from VCF to pull AFs for. default matches 1kG continental pops"
+            help = "list of population tags from frq file to pull AFs for. default matches 1kG continental pops"
             arg_type = String
             default = ["AFR","AMR","EUR","EAS","SAS"]
         "--model_snps","-l"
@@ -144,10 +139,11 @@ function matchSNPs(gene::String,snps::Array{String,1},bin_path::String,num_to_ma
     matched_snps = String[]
     open(bin_path) do inf
         for snp in snps
+            s = split(snp,",")
             for line in eachline(inf)
                 id = split(chomp(line),"\t")[1]
                 bin = split(chomp(line),"\t")[BIN_COL]
-                if snp == id
+                if id in s
                     target_bins = vcat(target_bins,bin)
                     break
                 end
@@ -180,67 +176,31 @@ function matchSNPs(gene::String,snps::Array{String,1},bin_path::String,num_to_ma
     return matched_snps
 end
 
-#calculates population-level frequencies
-function calcFreq(ids::Array{String,1},gts::Array{String,1},pop_path::String,pop_tags::Array{String,1},flipped::Bool,alt_gt::Int64)
-    freq = zeros(Float64,length(pop_tags))
-    pops = popDict(pop_path)
-    i = 1
-    for pop in pop_tags
-        pop_gts = [split(gt,":")[1] for gt in gts[findall(ind -> in(ind,pops[pop]),ids)]] #pull gts for inds in this pop
-        pop_gts = pop_gts[findall(!isequal(".$(GT_DELIM)."),pop_gts)] # remove missing entries
-        alleles = Int64[]
-        for gt in pop_gts
-            alleles = vcat(alleles,parse.(Int64,split(gt,GT_DELIM)))
-        end
-        # handle multiallelic sites
-        alleles[findall(!isequal(alt_gt),alleles)] .= 0
-        f = sum(alleles)/(2*length(pop_gts))
-        if flipped
-            f = 1.0-f
-        end
-        freq[i] = f
-        i += 1
-    end
-    return freq
-end
-
 #pulls population freqencies for SNPs
-function pullFreqs(snps::Array{String,1},vcf_path::String,pop_path::String,pop_tags::Array{String,1})
+function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String,1})
     # initiate fqcy matrix
     freqs = zeros(Float64,length(pop_tags),length(snps))
     chrs = [split(split(snp,"_")[1],"r")[2] for snp in snps]
-    # regions = join([join(split(snp,"_")[1:2],":") for snp in snps],",")
     regions = join([join([split(split(snp,"_")[1],"r")[2],split(snp,"_")[2]],":") for snp in snps],",")
-    refs = [split(snp,"_")[3] for snp in snps]
     alts = [split(snp,"_")[4] for snp in snps]
     for chr in unique(chrs)
-        chr_path = replace(vcf_path,"*" => chr)
-        ids = String[]
-        command = `bcftools view $chr_path -r $regions`
-        open(command) do inf
+        chr_path = replace(frq_path,"*" => chr)
+        pop_inds = Int64[]
+        open(chr_path) do inf
             for line in eachline(inf)
-                flipped = false
-                if startswith(line,"##") continue end
-                l = ["$x" for x in split(chomp(line),"\t")]
-                if startswith(l[1],"#")
-                    ids = l[9:end]
+                l = split(chomp(line),"\t")
+                if startswith(l[1],"CHROM")
+                    for pop in pop_tag
+                        pop_inds = vcat(pop_inds,findfirst(isequal(pop,l)))
+                    end
                     continue
                 end
-                index = findfirst(isequal("chr$(l[1])_$(l[2])"),[join(split(snp,"_")[1:2],"_") for snp in snps])
-                if typeof(index) == Nothing continue end #skip extra indels that get picked up if there's an indel that overlaps the target
-                alt = alts[index]
-                if in(refs[index],split(l[5],",")) #if ref is backwards
-                    flipped = true
-                    alt = refs[index]
-                end
-                if !in(alt,split(l[5],",")) #skip if different alt
-                    continue
-                end
-                alt_gt = findfirst(isequal(alt),split(l[5],","))
-                snp_freq = calcFreq(ids,l[9:end],pop_path,pop_tags,flipped,alt_gt)
-                if snp_freq == zeros(Float64,length(pop_tags)) println("chr$(l[1])_$(l[2])") end
+                snp_ind = findfirst(isequal("$(l[1])_$(l[2])"),[join(split(snp,"_")[1:2],"_") for snp in snps])
+                if typeof(snp_ind) == Nothing continue end #skip SNPs not of interest
+                allele_ind = findfirst(isequal(alts[snp_ind]),[split(x,":")[1] for x in split(l[pop_inds[1]],",")])
+                snp_freqs = [split(split(pop,",")[allele_ind],":")[2] for pop in l[pop_inds]]
                 # modify freqs so correct column has snp_freq values
-                freqs[:,index] = snp_freq
+                freqs[:,snp_ind] = parse.(Float64,snp_freq)
             end
         end
     end
@@ -260,24 +220,26 @@ function main()
     qx_path = parsed_args["out_path"]
     match_suffix = parsed_args["matched_snps"]
     gene = parsed_args["gene"]
+    num_snps = length(parsed_args["model_snps"])
     if isfile("$(splitdir(qx_path)[1])/$(gene)$(match_suffix)") > 0
         matched_snps = readMatch("$(splitdir(qx_path)[1])/$(gene)$(match_suffix)",parsed_args["gene"])
     else
         matched_snps = matchSNPs(parsed_args["gene"],parsed_args["model_snps"],parsed_args["snps"],parsed_args["num_match"],qx_path)
     end
 
-    snp_freqs,zero_inds = pullFreqs(parsed_args["model_snps"],parsed_args["pop_vcfs"],parsed_args["populations"],parsed_args["pop_tags"])
-    snp_freqs = snp_freqs[:,setdiff(1:end, zero_inds)] #remove all-zero-freq SNPs
+    all_freqs,zero_inds = pullFreqs(vcat(parsed_args["model_snps"],matched_snps),parsed_args["pop_frqs"],parsed_args["pop_tags"])
 
-    snp_betas = transpose(parsed_args["betas"][setdiff(1:end,zero_inds)])
+    snp_freqs = all_freqs[1:end,1:num_snps]
+    snp_freqs = snp_freqs[:,setdiff(1:end, zero_inds[findall(<(num_snps+1),zero_inds)])] #remove all-zero-freq SNPs
+
+    snp_betas = transpose(parsed_args["betas"][setdiff(1:end,zero_inds[findall(<(num_snps+1),zero_inds)])])
     snp_freqs = transpose(snp_freqs)
 
-    matched_freqs,zero_inds = pullFreqs(matched_snps,parsed_args["pop_vcfs"],parsed_args["populations"],parsed_args["pop_tags"])
-    matched_freqs = matched_freqs[:,setdiff(1:end, zero_inds)]  #remove all-zero-freq SNPs
+    matched_freqs = all_freqs[1:end,(num_snps+1):end]
+    matched_freqs = matched_freqs[:,setdiff(1:end, zero_inds[findall(>(num_snps),zero_inds)] .- num_snps)]  #remove all-zero-freq SNPs
 
     qx = Qx(snp_betas,snp_freqs,matched_freqs)
     open(qx_path,"w") do outf
-        num_snps = length(parsed_args["model_snps"])
         write(outf,"$(gene)\t$(num_snps)\t$qx\n")
     end
     println(Dates.now())

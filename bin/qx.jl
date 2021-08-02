@@ -11,11 +11,12 @@
 
 using ArgParse
 using SQLite
+using GZip
 
 SNP_COL = :rsid #saving variable model DB uses
 GENE_COL = :gene #saving variable model DB uses
 WEIGHT_COL = :weight #saving variable model DB uses
-DBSNP_FILE = "/project/mathilab/colbranl/gene_regulation_selection/data/snp150.txt.gz"
+DBSNP_FILE = "/project/mathilab/colbranl/gene_regulation_selection/data/jti_snp_coordinates.txt.gz"
 
 function parseCommandLine()
     s = ArgParseSettings()
@@ -57,9 +58,30 @@ function parseCommandLine()
     return parse_args(s)
 end
 
-function coordinateID(rsids::Array{String,1})
+function mapIDs(snp_path)
+    ids = Dict{String,String}()
+    GZip.open(snp_path) do f
+        for line in eachline(f)
+            if startswith(line,"#") continue end
+            l = split(chomp(line),"\t")
+            if occursin("_",l[1]) continue end #skip non-standard chromosomes
+            ids[l[4]] = join([join([l[1],l[3],l[5],x,"b38"],"_") for x in split(l[7],",")[1:end-1]],",")
+        end
+    end
+    return ids
+end
+
+function coordinateID(ids::Dict{String,String},rsids::Array{String,1})
     # read in mapping file and pull correct IDs
-    return join(coord_ids," ")
+    coord_ids = String[]
+    for rsid in rsids
+        try
+            coord_ids = vcat(coord_ids,[ids[rsid]])
+        catch e
+            coord_ids = vcat(coord_ids,[""])
+        end
+    end
+    return coord_ids
 end
 
 # read in database, then for each gene pull snps and effect sizes
@@ -98,24 +120,26 @@ function QxByGene(db_path::String,match_path::String,bin_path::String,vcf_path::
     genes = parseDB(db_path) # Dict{gene => [(id,weight)]}
     n = 1
     commands = String[]
+    coord_ids = mapIDs(DBSNP_FILE)
     for gene in keys(genes)
-        if n > 10 break end
         if n%genes_per_job == 0
             # runBSUB(outdir,commands,n,genes_per_job)
             commands = String[]
         end
-        snps = join([snp[1] for snp in genes[gene]]," ")
-        println(snps)
-        if !occursin("_",snps) #if IDs are not in coordinate ID form
-            snps = coordinateID([snp[1] for snp in genes[gene]])
+        snp_arr = [snp[1] for snp in genes[gene]]
+        if !occursin("_",snp_arr[1]) #if IDs are not in coordinate ID form
+            snp_arr = coordinateID(coord_ids,snp_arr)
         end
-        println(snps)
-        betas = join([snp[2] for snp in genes[gene]]," ")
-        command = "julia ./bin/qx_per_gene.jl -g $(gene) -l $(snps) -b $(betas) -o $(outdir)$(gene)_qx.txt -s $(bin_path) -v '$(vcf_path)' -t $(pop_tags) -p $(pop_path) -n $(num_to_match)\n"
+        unmatched = findall(x -> x=="",snp_arr)
+        deleteat!(snp_arr,unmatched)
+        snps = join([snp for snp in snp_arr])
+        betas = [snp[2] for snp in genes[gene]]
+        deleteat!(betas,unmatched)
+        command = "julia ./bin/qx_per_gene.jl -g $(gene) -l $(snps) -b $(join(betas,' ')) -o $(outdir)$(gene)_qx.txt -s $(bin_path) -v '$(vcf_path)' -t $(pop_tags) -p $(pop_path) -n $(num_to_match)\n"
         commands = vcat(commands,[command])
         n+=1
     end
-    # runBSUB(outdir,commands,n,length(commands)) #to catch the last few genes
+    runBSUB(outdir,commands,n,length(commands)) #to catch the last few genes
 end
 
 function main()

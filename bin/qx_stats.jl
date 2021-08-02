@@ -31,8 +31,9 @@ function genomicControl(chi_stat::Array{Float64,1},deg_f::Int64)
     @rput chi_stat
     @rput deg_f
     R"""
-        lambda <- median(chi_stat,na.rm=TRUE)/qchisq(0.5, df=deg_f) #inflation factor
-        corrected_p <- pchisq(chi_stat/lambda, df=deg_f, lower.tail=F)
+        corrected_p <- pchisq(chi_stat, df=deg_f, lower.tail=F)
+        # lambda <- median(chi_stat,na.rm=TRUE)/qchisq(0.5, df=deg_f) #inflation factor
+        # corrected_p <- pchisq(chi_stat/lambda, df=deg_f, lower.tail=F)
     """
     @rget corrected_p
     return corrected_p
@@ -44,7 +45,7 @@ function summaryStat(qx_path::String,deg_f::Int64)
     println("Qx $(summarystats(filter(!isnan,df[!,:qx])))")
     println("missing: $(length(filter(isnan,df[!,:qx])))")
     df[:,:pval] = genomicControl(df[!,:qx],deg_f)
-    CSV.write("$(splitext(qx_path)[1])_pval.txt",df;delim="\t")
+    CSV.write("$(splitext(qx_path)[1])_rawpval.txt",df;delim="\t")
 
 # plot Qx distribution
     dis_plot = hist(filter(!isnan,df[!,:qx]);bins=50)
