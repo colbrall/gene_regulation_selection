@@ -27,16 +27,22 @@ function parseCommandLine()
     return parse_args(s)
 end
 
-function genomicControl(chi_stat::Array{Float64,1},deg_f::Int64)
+function calcP(chi_stat::Array{Float64,1},deg_f::Int64)
     @rput chi_stat
     @rput deg_f
     R"""
-        corrected_p <- pchisq(chi_stat, df=deg_f, lower.tail=F)
-        # lambda <- median(chi_stat,na.rm=TRUE)/qchisq(0.5, df=deg_f) #inflation factor
-        # corrected_p <- pchisq(chi_stat/lambda, df=deg_f, lower.tail=F)
+        raw_p <- pchisq(chi_stat, df=deg_f, lower.tail=F) #raw p
+
+        lambda <- median(chi_stat,na.rm=TRUE)/qchisq(0.5, df=deg_f) #inflation factor
+        gc_p <- pchisq(chi_stat/lambda, df=deg_f, lower.tail=F)  #gc-correction p
+         ​
+        params <- fitdistr(chi_stat, dgamma, start=list(shape=1, rate=1)) #fit gamma dist to qx
+        gamma_p <- pgamma(chi_stat, shape=params$estimate[1], rate=params$estimate[2], lower.tail=FALSE) # gamma p
     """
-    @rget corrected_p
-    return corrected_p
+    @rget raw_p
+    @rget gc_p
+    @rget gamma_p
+    return raw_p,gc_p,gamma_p
 end
 
 # plot distribution and calculate empirical p-value, given list of qx values
@@ -44,8 +50,8 @@ function summaryStat(qx_path::String,deg_f::Int64)
     df = CSV.read(qx_path,DataFrame;header=HEADER)
     println("Qx $(summarystats(filter(!isnan,df[!,:qx])))")
     println("missing: $(length(filter(isnan,df[!,:qx])))")
-    df[:,:pval] = genomicControl(df[!,:qx],deg_f)
-    CSV.write("$(splitext(qx_path)[1])_rawpval.txt",df;delim="\t")
+    df[:,:raw_pval],df[:,:gc_pval],df[:gamma_p] = calcP(df[!,:qx],deg_f)
+    CSV.write("$(splitext(qx_path)[1])_pvals.txt",df;delim="\t")
 
 # plot Qx distribution
     dis_plot = hist(filter(!isnan,df[!,:qx]);bins=50)
