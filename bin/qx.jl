@@ -30,8 +30,8 @@ function parseCommandLine()
             help = "sqlite database with genes and snp effect sizes"
             arg_type = String
             required=true
-        "--pop_vcfs","-v"
-            help = "path to vcfs with population AFs for calculating Qx. Assumes that they are split by chr, and that you've put a * in for the chr number, and that they've been indexed by tabix"
+        "--pop_freqs","-f"
+            help = "path to files with population AFs for calculating Qx. Assumes that they are split by chr, and that you've put a * in for the chr number."
             arg_type = String
             required = true
         "--num_match","-n"
@@ -42,14 +42,11 @@ function parseCommandLine()
             help = "file with list of IDs of matched SNPs for run. if left empty, script will match SNPs itself using --snps option"
             arg_type =  String
             default = "_matched_snps.txt"
-        "--populations","-p"
-            help = "tab-delim file with population assignments for all individuals in vcf files. assumes col1 is id, col2 is pop"
-            arg_type = String
-            required = true
         "--pop_tags","-t"
             help = "list of population INFO tags from VCF to pull AFs for. default matches 1kG continental pops"
             arg_type = String
-            default = "AFR AMR EUR EAS SAS"
+            nargs='*'
+            default = ["AFR", "AMR","EUR","EAS","SAS"]
         "--genes_per_job","-j"
             help = "number of genes to run per bsub job"
             arg_type = Int64
@@ -72,7 +69,6 @@ function mapIDs(snp_path)
 end
 
 function coordinateID(ids::Dict{String,String},rsids::Array{String,1})
-    # read in mapping file and pull correct IDs
     coord_ids = String[]
     for rsid in rsids
         try
@@ -114,7 +110,7 @@ function runBSUB(outdir::String,commands::Array{String,1},n::Int64,genes_per_job
 end
 
 #organizes input parsing for Qx calculation
-function QxByGene(db_path::String,match_path::String,bin_path::String,vcf_path::String,pop_path::String,pop_tags::String,num_to_match::Int64,genes_per_job::Int64)
+function QxByGene(db_path::String,match_path::String,bin_path::String,freq_path::String,pop_tags::String,num_to_match::Int64,genes_per_job::Int64)
     outdir = "$(splitext(db_path)[1])/"
     if !isdir(outdir) mkdir(outdir) end
     genes = parseDB(db_path) # Dict{gene => [(id,weight)]}
@@ -123,7 +119,7 @@ function QxByGene(db_path::String,match_path::String,bin_path::String,vcf_path::
     coord_ids = mapIDs(DBSNP_FILE)
     for gene in keys(genes)
         if n%genes_per_job == 0
-            # runBSUB(outdir,commands,n,genes_per_job)
+            runBSUB(outdir,commands,n,genes_per_job)
             commands = String[]
         end
         snp_arr = [snp[1] for snp in genes[gene]]
@@ -132,10 +128,12 @@ function QxByGene(db_path::String,match_path::String,bin_path::String,vcf_path::
         end
         unmatched = findall(x -> x=="",snp_arr)
         deleteat!(snp_arr,unmatched)
-        snps = join([snp for snp in snp_arr])
+        snps = join([snp for snp in snp_arr]," ")
         betas = [snp[2] for snp in genes[gene]]
         deleteat!(betas,unmatched)
-        command = "julia ./bin/qx_per_gene.jl -g $(gene) -l $(snps) -b $(join(betas,' ')) -o $(outdir)$(gene)_qx.txt -s $(bin_path) -v '$(vcf_path)' -t $(pop_tags) -p $(pop_path) -n $(num_to_match)\n"
+        command = "julia ./bin/qx_per_gene.jl -g $(gene) -l $(snps) -b $(join(betas,' ')) -o $(outdir)$(gene)_qx.txt -s $(bin_path) -f '$(freq_path)' -t $(pop_tags) -n $(num_to_match)\n"
+        println(command)
+        exit()
         commands = vcat(commands,[command])
         n+=1
     end
@@ -144,7 +142,7 @@ end
 
 function main()
     parsed_args = parseCommandLine()
-    QxByGene(parsed_args["db"],parsed_args["matched_snps"],parsed_args["snps"],parsed_args["pop_vcfs"],parsed_args["populations"],parsed_args["pop_tags"],parsed_args["num_match"],parsed_args["genes_per_job"])
+    QxByGene(parsed_args["db"],parsed_args["matched_snps"],parsed_args["snps"],parsed_args["pop_freqs"],join(parsed_args["pop_tags"]," "),parsed_args["num_match"],parsed_args["genes_per_job"])
 end
 
 main()
