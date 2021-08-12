@@ -13,7 +13,7 @@ using GZip
 BIN_COL = 3 #column in bin file that contains bin id
 SNP_COL = :rsid #saving variable model DB uses
 GENE_COL = :gene #saving variable model DB uses
-DBSNP_FILE = "/project/mathilab/colbranl/gene_regulation_selection/data/jti_snp_coordinates.txt.gz"
+COORD_FILE = "/project/mathilab/colbranl/gene_regulation_selection/data/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.lookup_table.txt.gz"
 
 function parseCommandLine()
     s = ArgParseSettings()
@@ -49,19 +49,20 @@ function parseDB(path::String)
 end
 
 function mapIDs(snp_path)
-    ids = Dict{String,Array{String,1}}()
+    ids = Dict{String,String}()
     GZip.open(snp_path) do f
         for line in eachline(f)
-            if startswith(line,"#") continue end
+            if startswith(line,"v") continue end
             l = split(chomp(line),"\t")
-            if occursin("_",l[1]) continue end #skip non-standard chromosomes
-            ids[l[4]] = [join([l[1],l[3],l[5],x,"b38"],"_") for x in split(l[7],",")[1:end-1]]
+            ids[l[7]] = l[1]
+            # if occursin("_",l[1]) continue end #skip non-standard chromosomes
+            # ids[l[4]] = join([join([l[1],l[3],l[5],x,"b38"],"_") for x in split(l[7],",")[1:end-1]],",")
         end
     end
     return ids
 end
 
-function coordinateID(ids::Dict{String,Array{String,1}},rsids::Array{String,1})
+function coordinateID(ids::Dict{String,String},rsids::Array{String,1})
     coord_ids = String[]
     for rsid in rsids
         try
@@ -76,7 +77,7 @@ end
 # identifies matched sets of SNPs based on bins
 function matchSNPs(db_path::String,bin_path::String,num_to_match::Int64)
     bin_snps = Dict{String,Array{String,1}}()
-    coord_ids = mapIDs(DBSNP_FILE)
+    coord_ids = mapIDs(COORD_FILE)
     genes = parseDB(db_path)
 
     open(bin_path) do inf
@@ -87,6 +88,7 @@ function matchSNPs(db_path::String,bin_path::String,num_to_match::Int64)
             #     println(line)
             #     break
             # end
+            if startswith(line,"chrX") continue end
             id = split(chomp(line),"\t")[1]
             bin = split(chomp(line),"\t")[BIN_COL]
             if in(bin,keys(bin_snps))
