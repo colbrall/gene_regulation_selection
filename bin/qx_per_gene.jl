@@ -75,21 +75,21 @@ end
 # calculates Qx statistic
 function Qx(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Transpose{Float64,Array{Float64,2}},matched_freqs::Array{Float64,2})
     z = [2*sum(snp_betas * snp_freqs[:,i]) for i in 1:size(snp_freqs)[2]] # calculating mean genetic values for each population
-    println("Z: $z")
+    # println("Z: $z")
     z_prime = centerScaleAFMatrix(length(z)) * z # estimated genetic values for the first M-1 populations, centered at the mean
-    println("Z': $z_prime")
+    # println("Z': $z_prime")
     va = scalingFactor(snp_betas,snp_freqs)
-    println("Va: $va")
+    # println("Va: $va")
     f = neutralCovarianceMatrix(matched_freqs)
-    display(f)
-    println()
+    # display(f)
+    # println()
     c = cholesky(Hermitian(f)).L #was crashing initially due to rounding error in f making it look non-Hermitian
-    display(c)
-    println()
+    # display(c)
+    # println()
     x = 1/(sqrt(2*va))*inv(c)*z_prime
-    println("x: $x")
+    # println("x: $x")
     qx=transpose(x) * x
-    println("Qx: $qx")
+    # println("Qx: $qx")
     return qx
 end
 
@@ -131,71 +131,97 @@ function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String
     # initiate fqcy matrix
     freqs = zeros(Float64,length(pop_tags),length(snps))
     chrs = [split(split(snp,"_")[1],"r")[2] for snp in snps]
-    regions = join([join([split(split(snp,"_")[1],"r")[2],split(snp,"_")[2]],":") for snp in snps],",")
+    positions = [join(split(snp,"_")[1:2],"_") for snp in snps]
     alts = [split(snp,"_")[4] for snp in snps]
+    #build tabix regions file
+    tmp_file = "tmp.regions.$(Dates.now())" #naming so that parallel jobs don't collide
+    open(tmp_file,"w") do outf
+        for ind in 1:length(snps)
+            write(outf,"$(replace(positions[ind],'_'=>'\t'))\n")
+        end
+    end
     for chr in unique(chrs)
         chr_path = replace(frq_path,"*" => chr)
+        # id indices for pops
         pop_inds = Int64[]
-        open(chr_path) do inf
-            for line in eachline(inf)
+        println(chr_path)
+        GZip.open(chr_path) do chrf
+            for line in eachline(chrf)
                 l = split(chomp(line),"\t")
                 if startswith(l[1],"CHROM")
                     for pop in pop_tags
-                        pop_inds = vcat(pop_inds,findfirst(isequal(pop,l)))
+                        pop_inds = vcat(pop_inds,findfirst([isequal(pop,x) for x in l]))
                     end
-                    continue
+                    # println(pop_inds)
+                    break
                 end
-                snp_ind = findfirst(isequal("$(l[1])_$(l[2])"),[join(split(snp,"_")[1:2],"_") for snp in snps])
-                if typeof(snp_ind) == Nothing continue end #skip SNPs not of interest
-                allele_ind = findfirst(isequal(alts[snp_ind]),[split(x,":")[1] for x in split(l[pop_inds[1]],",")])
-                snp_freqs = [split(split(pop,",")[allele_ind],":")[2] for pop in l[pop_inds]]
-                # modify freqs so correct column has snp_freq values
-                freqs[:,snp_ind] = parse.(Float64,snp_freq)
             end
         end
+        #query SNPs for tabix
+        command = `tabix -R $(tmp_file) $(chr_path)`
+        open(command) do inf
+            for line in eachline(inf)
+                l = split(chomp(line),"\t")
+                snp_ind = findfirst(isequal("$(l[1])_$(l[2])"),positions)
+                # println(l)
+                # println(snps[snp_ind])
+                allele_ind = findfirst(isequal(alts[snp_ind]),[split(x,":")[1] for x in split(l[pop_inds[1]],",")])
+                # println(allele_ind)
+                if typeof(allele_ind) == Nothing continue end #skip if alt allele isn't present
+                snp_freqs = [split(split(pop,",")[allele_ind],":")[2] for pop in l[pop_inds]]
+                # modify freqs so correct column has snp_freq values
+                freqs[:,snp_ind] = parse.(Float64,snp_freqs)
+            end
+        end
+        println("\tchr$(chr) freqs: $(Dates.now())")
     end
+    file_rm = `rm $(tmp_file)`
+    run(file_rm)
     indices = Int64[]
-    for col in 1:size(freqs)[2]
+    for col in 1:size(freqs)[2] #record indices of any SNPs we couldn't find frequencies for, so we can remove them
         if freqs[:,col] == repeat([0.0],size(freqs)[1])
             indices = vcat(indices,col)
         end
     end
+    println("\tupdate freqs matrix: $(Dates.now())")
     return freqs,indices
 end
 
 function main()
     parsed_args = parseCommandLine()
     println(parsed_args["gene"])
-    println(Dates.now())
+    println("Start: $(Dates.now())")
     qx_path = parsed_args["out_path"]
     gene = parsed_args["gene"]
     num_snps = length(parsed_args["model_snps"])
 
     matched_snps = readMatch(parsed_args["matched_snps"],parsed_args["gene"])
-    println(Dates.now())
-    println(size(matched_snps))
+    println("Read Matches: $(Dates.now())")
+    # println(size(matched_snps))
     all_freqs,zero_inds = pullFreqs(vcat(parsed_args["model_snps"],matched_snps),parsed_args["pop_frqs"],parsed_args["pop_tags"])
-    println(size(all_freqs))
-    println(all_freqs[1:end,1:10])
+    # println(size(all_freqs))
+    # println(all_freqs[1:end,1:10])
 
+    println("pull all Freqs: $(Dates.now())")
     snp_freqs = all_freqs[1:end,1:num_snps]
-    println(size(snp_freqs))
+    # println(size(snp_freqs))
     snp_freqs = snp_freqs[:,setdiff(1:end, zero_inds[findall(<(num_snps+1),zero_inds)])] #remove all-zero-freq SNPs
-    println(size(snp_freqs))
-    println(size(parsed_args["betas"]))
+    # println(size(snp_freqs))
+    # println(size(parsed_args["betas"]))
     snp_betas = transpose(parsed_args["betas"][setdiff(1:end,zero_inds[findall(<(num_snps+1),zero_inds)])])
     snp_freqs = transpose(snp_freqs)
 
     matched_freqs = all_freqs[1:end,(num_snps+1):end]
-    println(size(matched_freqs))
+    # println(size(matched_freqs))
     matched_freqs = matched_freqs[:,setdiff(1:end, zero_inds[findall(>(num_snps),zero_inds)] .- num_snps)]  #remove all-zero-freq SNPs
-    println(size(matched_freqs))
+    # println(size(matched_freqs))
 
+    println("Split Freqs: $(Dates.now())")
     qx = Qx(snp_betas,snp_freqs,matched_freqs)
     open(qx_path,"w") do outf
         write(outf,"$(gene)\t$(num_snps)\t$qx\n")
     end
-    println(Dates.now())
+    println("Finish: $(Dates.now())")
 end
 
 main()
