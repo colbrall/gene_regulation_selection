@@ -144,7 +144,7 @@ function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String
         chr_path = replace(frq_path,"*" => chr)
         # id indices for pops
         pop_inds = Int64[]
-        println(chr_path)
+        # println(chr_path)
         GZip.open(chr_path) do chrf
             for line in eachline(chrf)
                 l = split(chomp(line),"\t")
@@ -173,7 +173,7 @@ function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String
                 freqs[:,snp_ind] = parse.(Float64,snp_freqs)
             end
         end
-        println("\tchr$(chr) freqs: $(Dates.now())")
+        # println("\tchr$(chr) freqs: $(Dates.now())")
     end
     file_rm = `rm $(tmp_file)`
     run(file_rm)
@@ -183,26 +183,26 @@ function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String
             indices = vcat(indices,col)
         end
     end
-    println("\tupdate freqs matrix: $(Dates.now())")
+    # println("\tupdate freqs matrix: $(Dates.now())")
     return freqs,indices
 end
 
 function main()
     parsed_args = parseCommandLine()
     println(parsed_args["gene"])
-    println("Start: $(Dates.now())")
+    # println("Start: $(Dates.now())")
     qx_path = parsed_args["out_path"]
     gene = parsed_args["gene"]
     num_snps = length(parsed_args["model_snps"])
 
     matched_snps = readMatch(parsed_args["matched_snps"],parsed_args["gene"])
-    println("Read Matches: $(Dates.now())")
+    # println("Read Matches: $(Dates.now())")
     # println(size(matched_snps))
     all_freqs,zero_inds = pullFreqs(vcat(parsed_args["model_snps"],matched_snps),parsed_args["pop_frqs"],parsed_args["pop_tags"])
     # println(size(all_freqs))
     # println(all_freqs[1:end,1:10])
 
-    println("pull all Freqs: $(Dates.now())")
+    # println("pull all Freqs: $(Dates.now())")
     snp_freqs = all_freqs[1:end,1:num_snps]
     # println(size(snp_freqs))
     snp_freqs = snp_freqs[:,setdiff(1:end, zero_inds[findall(<(num_snps+1),zero_inds)])] #remove all-zero-freq SNPs
@@ -216,12 +216,12 @@ function main()
     matched_freqs = matched_freqs[:,setdiff(1:end, zero_inds[findall(>(num_snps),zero_inds)] .- num_snps)]  #remove all-zero-freq SNPs
     # println(size(matched_freqs))
 
-    println("Split Freqs: $(Dates.now())")
+    # println("Split Freqs: $(Dates.now())")
     qx = Qx(snp_betas,snp_freqs,matched_freqs)
     open(qx_path,"w") do outf
         write(outf,"$(gene)\t$(num_snps)\t$qx\n")
     end
-    println("Finish: $(Dates.now())")
+    # println("Finish: $(Dates.now())")
 end
 
 main()
