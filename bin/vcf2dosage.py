@@ -1,109 +1,57 @@
 # vcf2dosage.py
 # Laura Colbran 5/8/17
-# convert altai neanderthal vcf genome into dosage files for PrediXcan
-# not generalizable as of yet
-# currently only filtering out places where genotype = ./.
+# updated 09/14/21 to be python 3, and do mean imputing
 #
-# USAGE: python vcf2dosage.py TYPE PATH/TO/VCF
-# TYPE can by 1kG or update
-# python 2
+# USAGE: python vcf2dosage.py PATH/TO/VCF
+# confirmed functional on NYGC VCFs. double-check formatting before running others
+# python 3
 
 # dosage output:
-# chr | snp_id | pos | a1 | a2 | MAF | altai
+# chr | snp_id | pos | a1 | a2 | MAF | [genotypes]
 
 import sys
 import string
 import gzip
 
 ALLELES = ["A","C","G","T"]
+COMMENT_CHAR = "##"
+DELIM = "\t"
 
-def thousGens(path):
-    comment_char = "##"
-    delim = "\t"
+def NYFC_1kG(path):
     with gzip.open(sys.argv[-1], 'r') as f:
         for line in f:
-            if line.startswith(comment_char): continue
-            l = str.split(line.strip(),delim)
+            if line.decode("utf-8").startswith(COMMENT_CHAR): continue
+            l = str.split(line.decode("utf-8").strip(),DELIM)
             pop = l[9:]
-            if line.startswith("#CHROM"):
-                print "#chr\tsnp_id\tpos\ta1\ta2\tMAF\t%s" % (delim.join(pop))
+            if l[0] == "#CHROM":
+                print( "#chr\tsnp_id\tpos\ta1\ta2\tMAF\t%s" % (DELIM.join(pop)))
                 continue
+            # skip multiallelic sites
+            if "," in l[4]: continue
             chrm = l[0]
             pos = l[1]
             id = l[2]
             a1 = l[3]
             a2 = l[4]
-            maf = "."
+            maf = str.split(str.split(l[7],";")[1],"=")[1]
             ac = []
             for person in pop: #iterate through genotypes
-                if person == "0|0":
-                    ac.append("0")
-                elif person == "0|1" or person == "1|0":
-                    ac.append("1")
-                else:
-                    ac.append("2")
-            print "%s\t%s\t%s\t%s\t%s\t%s\t%s" % (chrm,id,pos,a1,a2,maf,delim.join(ac))
-
-def update_vcf(path): #prufer 2017 VCFs
-    comment_char = "##"
-    delim = "\t"
-    with gzip.open(sys.argv[-1], 'r') as f:
-        for line in f:
-            if line.startswith(comment_char): continue
-            l = str.split(line.strip(),delim)
-            if line.startswith("#CHROM"):
-                print "#chr\tsnp_id\tpos\ta1\ta2\tMAF\t%s" % ('\t'.join(l[9:]))
-                continue
-            chrm = l[0]
-            pos = l[1]
-            id = l[2]
-            a1 = l[3]
-            a2 = l[4]
-            maf = "."
-            ac = []
-            try:
-                a1 = ALLELES[int(a1)-1]
-                a2 = ALLELES[int(a2)-1]
-            except:
-                continue
-            types = [str.split(x,":")[0] for x in l[9:]]
-            for gt in types:
+                gt = str.split(person,":")[0]
                 if gt == "0/0":
                     ac.append("0")
                 elif gt == "0/1" or gt == "1/0":
                     ac.append("1")
                 elif gt == "1/1":
                     ac.append("2")
-                else:
+                else: #should only catch missing GTs
                     ac.append("NA")
-            print "%s\t%s\t%s\t%s\t%s\t%s\t%s" % (chrm,id,pos,a1,a2,maf,'\t'.join(ac))
-
-def old_vcf(line): #original altai, denisovan
-    chrm = line[0]
-    pos = line[1]
-    id = line[2]
-    a1 = line[3]
-    a2 = line[4]
-    maf = "."
-    ac = "."
-    for entry in str.split(line[7],";"):
-        if entry.startswith("AC="):
-            ac = str.split(entry,"=")[1]
-    if ac != ".": #ac=. when locus didn't pass some sort of filtering
-        print "%s\t%s\t%s\t%s\t%s\t%s\t%s" % (chrm,id,pos,a1,a2,maf,ac)
+            # mean impute missing dosages
+            mean_dosage = sum([float(e) for e in ac if e != "NA" ])/len([e for e in ac if e != "NA" ])
+            ac = [str(mean_dosage) if e == "NA" else e for e in ac]
+            print("%s\t%s\t%s\t%s\t%s\t%s\t%s" % (chrm,id,pos,a1,a2,maf,DELIM.join(ac)))
 
 def main():
-    if sys.argv[-2] == "1kG":
-        thousGens(sys.argv[-1])
-    elif sys.argv[-2] == "update":
-        update_vcf(sys.argv[-1])
-    else:
-        comment_char = "#"
-        print "#chr\tsnp_id\tpos\ta1\ta2\tMAF\taltai"
-        with gzip.open(sys.argv[-1], 'r') as f:
-            for line in f:
-                if line.startswith(comment_char): continue
-                old_vcf(str.split(line.strip(),"\t"))
+    NYFC_1kG(sys.argv[-1])
 
 if __name__ == "__main__":
     main()
