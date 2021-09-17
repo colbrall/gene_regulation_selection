@@ -93,7 +93,7 @@ class TranscriptionMatrix:
         self.beta_file = beta_file
         self.gene_file = gene_file
         self.sample_file = sample_file
-        self.complements = {"A":"T","C":"G","G":"C","T":"A"}
+        self.complements = {"A":"T","C":"G","G":"C","T":"A","R":"R"}
 
     def get_gene_list(self):
         if self.gene_file:
