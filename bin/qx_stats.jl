@@ -7,7 +7,7 @@ using ArgParse
 using CSV,DataFrames
 using StatsBase
 using RCall
-using NMF
+using LinearAlgebra,NMF
 using Plots,Seaborn
 
 COLOURS = [:firebrick,:tomato,:sienna,:tan,:darkblue,:dodgerblue,:darkgreen,:mediumseagreen,:black,:silver]
@@ -38,8 +38,11 @@ function parseCommandLine()
         "--num_groups","-k"
             nargs='*'
             arg_type = Int64
-            help = "number of dimensions for NMF. can be multiple."
+            help = "number of dimensions for NMF. can be multiple. First is the k used for summary stats."
             default= [1,3,5,10,15,20,25,30,35,40]
+        "--impute"
+            action=:store_true
+            help = "for NMF, if you want to impute missing values rather than filling in 1"
     end
     return parse_args(s)
 end
@@ -63,6 +66,24 @@ function calcP(chi_stat::Array{Float64,1},deg_f::Int64)
     return raw_p,gc_p,gamma_p
 end
 
+# returns bonferroni multiple testing correction significance threshold
+function bonferroni(m::Int64)
+  return 0.05/m
+end
+
+# returns Benjamini Hochberg FDR multiple testing correction significance threshold
+function FDR(a::Array{Any,1})
+  fdr = 0.0
+  f = DataFrame(values = sort(a), rank = collect(1:length(a)))
+  for i in 1:nrow(f)
+    if (0.05*f[i,2]/nrow(f)) < f[i,1]
+      fdr = f[i,1]
+      break
+    end
+  end
+  return fdr
+end
+
 # calls shell wc -l to count rows without reading whole file
 function numRows(path::String)
     n = 0
@@ -75,6 +96,59 @@ function numRows(path::String)
     return n
 end
 
+function fillColMeans(mat::Array{Float64,2})
+    for i in 1:size(mat)[2]
+        col_mean = mean(mat[findall(x-> x!=-100,mat[:,i]),i])
+        mat[findall(x-> x==-100,mat[:,i]),i] .= col_mean
+    end
+    return mat
+end
+
+# code adapted from iain's R version
+function qqCI(N::Int64)
+    @rput N
+    R"""
+    lo <- -log10(sapply(1:N,function(x) qbeta(.025,x,N-x+1)))
+    up <- -log10(sapply(1:N,function(x) qbeta(.975,x,N-x+1)))
+    """
+    @rget lo
+    @rget up
+    x_vals = -log10.((collect(1:N).-0.5)./N)
+    x_coords = vcat(x_vals,reverse(x_vals))
+    y_coords = vcat(lo,reverse(up))
+    return x_coords,y_coords
+end
+
+# uses NMF to impute missing data, at whatever k was first (so same k as that plotted)
+function imputeNMF(mat::Array{Float64,2},k::Int64)
+    # record indices of missing values (-100)
+    missing_inds = findall(x -> x==-100,mat)
+    # set them to column means for first iteration
+    mat = fillColMeans(mat)
+    converged = false
+    num_its = 0
+    e = -100
+    while !converged
+        # do NMF with k
+        r = nnmf(mat,k)
+        # multiply W and H
+        impute_mat = r.W*r.H
+        # replace old values at missing indices  with multiplication values
+        new_mat = copy(mat)
+        new_mat[missing_inds] = impute_mat[missing_inds]
+        # check convergence using frobenius norm of difference
+        new_e = norm(new_mat - mat)
+        if abs(e-new_e) <= 1
+            converged = true
+        end
+        num_its += 1
+        mat = copy(new_mat)
+        e = copy(new_e)
+    end
+    println("Imputation:\nNum. Iterations: $(num_its); final diff. norm: $(e)")
+    return mat
+end
+
 # plot distribution and calculate empirical p-value, given list of qx values
 function summaryStat(df::DataFrames.DataFrame,qx_path::String,deg_f::Int64)
     println("Qx $(summarystats(filter(!isnan,df[!,:qx])))")
@@ -82,23 +156,19 @@ function summaryStat(df::DataFrames.DataFrame,qx_path::String,deg_f::Int64)
     df[:,:raw_pval],df[:,:gc_pval],df[:,:gamma_p] = calcP(df[!,:qx],deg_f)
     CSV.write("$(splitext(qx_path)[1])_pvals.txt",df;delim="\t")
 
-# plot qqplot
+# calculate stats for qq plot
     df = df[findall(x -> !isnan(x),df[!,:qx]),:]
     sort!(df,:gamma_p)
     df[:,:exp] .= 0.0
     for i in 1:nrow(df)
         df[i,:exp] = -log10(i/nrow(df))
     end
-    x = [0,maximum(df[!,:exp])]
-
-    qq = Plots.plot(x,x,color = :grey,xlabel="-log10(Expected P)",ylabel = "-log10(observed P)",margin=7Plots.mm,grid=false) #,lims=(0,maximum(-log10.(results[!,:corr_pval])))
-	qq = Plots.scatter!(df[!,:exp],-log10.(df[!,:gamma_p]), legend = false,color = :black, alpha = 0.5,markersize=3)
-    Plots.savefig("$(splitext(qx_path)[1])_qqplot.pdf")
+    return df[:,[:gamma_p,:exp]]
 end
 
 # use NMF to reduce dims of gene x tissue matrix
 # calls summaryStat for first k
-function dimReduceNMF(mat_path::String,k::Array{Int64},deg_f::Int64)
+function dimReduceNMF(mat_path::String,k::Array{Int64},deg_f::Int64,to_impute::Bool)
     # read in qx_matrix
     header = String[]
     genes = String[]
@@ -114,9 +184,13 @@ function dimReduceNMF(mat_path::String,k::Array{Int64},deg_f::Int64)
             end
             l = split(chomp(line),"\t")
             genes[ind-1] = l[1]
-            #replace missing data with zeroes. this is dominated by expression patterns, so while will affect the grouping, not in a bad way
-            qx_mat[ind-1,1:end] = parse.(Float64,replace(replace(l[2:end],"NaN"=>"0"),"NA"=>"0"))
+            qx_mat[ind-1,1:end] = parse.(Float64,replace(replace(l[2:end],"NaN"=>"-100"),"NA"=>"-100"))
         end
+    end
+    if to_impute
+        qx_mat = imputeNMF(qx_mat,k[1])
+    else
+        qx_mat = fillColMeans(qx_mat)
     end
     # for a range of k, run NMF and calculate MSE
     results = NMF.Result{Float64}[]
@@ -142,16 +216,38 @@ function dimReduceNMF(mat_path::String,k::Array{Int64},deg_f::Int64)
     W = results[1].W
     # run summaryStat for each column (ie tissue group) in W
     for i in 1:size(W)[2]
-        distplot = Seaborn.kdeplot(W[:,i],color=COLOURS[i])
+        distplot = Seaborn.kdeplot(W[:,i],color=COLOURS[i],legend = true,)
     end
     xlabel("W Matrix value")
     Seaborn.savefig("$(splitext(mat_path)[1])_k$(k[1])_dist.pdf")
     clf()
+    all_p = DataFrames.DataFrame(gamma_p = Float64,exp=Float64[],group = Int64[])
+    max_N = 0
     for i in 1:size(W)[2]
         println("Group $(i):")
         df = DataFrames.DataFrame(gene = genes,qx=W[:,i])
-        summaryStat(df[df[!,:qx].!=0,:],"$(splitext(mat_path)[1])_k$(k[1])_group$(i)",deg_f)
+        df = summaryStat(df[df[!,:qx].!=0,:],"$(splitext(mat_path)[1])_k$(k[1])_group$(i)",deg_f)
+        # df = summaryStat(df,"$(splitext(mat_path)[1])_k$(k[1])_group$(i)",deg_f)
+        df[!,:group] .= i
+        if nrow(df) > max_N
+            max_N = nrow(df)
+        end
+        all_p = vcat(all_p,df)
     end
+
+    #combined qqplot
+    ci_poly_x,ci_poly_y = qqCI(max_N)
+    x = [0,maximum(ci_poly_x)]
+    bonf_y = repeat([-log10(bonferroni(nrow(all_p)))],2)
+    fdr_y = repeat([-log10(FDR(all_p[!,:gamma_p]))],2)
+    qq = Plots.plot(Shape(ci_poly_x,ci_poly_y),color=:grey,alpha=0.5,xlabel="-log10(Expected P)",ylabel = "-log10(observed P)",margin=7Plots.mm,grid=false)
+    qq = Plots.plot!(x,x,color = :grey) #,lims=(0,maximum(-log10.(results[!,:corr_pval])))
+    qq = Plots.plot!(x,bonf_y,color = :red)
+    qq = Plots.plot!(x,fdr_y,color = :orange)
+    for i in 1:size(W)[2]
+        qq = Plots.scatter!(all_p[all_p[!,:group] .== i,:exp],-log10.(all_p[all_p[!,:group] .== i,:gamma_p]), legend = :topleft,color = COLOURS[i], alpha = 0.5,markersize=3)
+    end
+    Plots.savefig("$(splitext(mat_path)[1])_k$(k[1])_qqplot.pdf")
 end
 
 function main()
@@ -164,10 +260,15 @@ function main()
         xlabel("Qx")
         Seaborn.savefig("$(parsed_args["qx"])_dist.pdf")
         clf()
-        summaryStat(df,parsed_args["qx"],parsed_args["deg_f"])
+        df = summaryStat(df,parsed_args["qx"],parsed_args["deg_f"])
+
+        x = [0,maximum(df[!,:exp])]
+        qq = Plots.plot(x,x,color = :grey,xlabel="-log10(Expected P)",ylabel = "-log10(observed P)",margin=7Plots.mm,grid=false) #,lims=(0,maximum(-log10.(results[!,:corr_pval])))
+    	qq = Plots.scatter!(df[!,:exp],-log10.(df[!,:gamma_p]), legend = false,color = :black, alpha = 0.5,markersize=3)
+        Plots.savefig("$(splitext(parsed_args["qx"])[1])_qqplot.pdf")
     end
     if parsed_args["nmf"]
-        dimReduceNMF(parsed_args["qx_matrix"],parsed_args["num_groups"],parsed_args["deg_f"])
+        dimReduceNMF(parsed_args["qx_matrix"],parsed_args["num_groups"],parsed_args["deg_f"],parsed_args["impute"])
     end
 end
 
