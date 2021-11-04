@@ -10,7 +10,7 @@ using RCall
 using LinearAlgebra,NMF
 using Plots,Seaborn
 
-COLOURS = [:firebrick,:tomato,:sienna,:tan,:darkblue,:dodgerblue,:darkgreen,:mediumseagreen,:black,:silver]
+COLOURS = ["#b93e0f","#a1c6d8","#5f3912","#feae02","#6b878f","#c6d737","#171b17","#fe8515","#b7c1c2","#9a5611"]
 Seaborn.set(style="white", palette="muted")
 HEADER = ["gene","numsnps","qx"]
 ENV["GKSwstype"] = "100" #fixes a segfault bug in GR backend for Plots.jl: https://discourse.julialang.org/t/generation-of-documentation-fails-qt-qpa-xcb-could-not-connect-to-display/60988
@@ -210,6 +210,8 @@ function dimReduceNMF(mat_path::String,k::Array{Int64},deg_f::Int64,to_impute::B
         h = Seaborn.heatmap(transpose(results[i].H),xticklabels=collect(1:k[i]),yticklabels=header[2:end],square=true,cmap="OrRd")
         ylabel("Tissue")
         xlabel("Group")
+        h.tick_params(axis="x",labelsize="4")
+        h.tick_params(axis="y",labelsize="4")
         Seaborn.savefig("$(splitext(mat_path)[1])_k$(k[i])_H.pdf")
         clf()
     end
@@ -240,6 +242,8 @@ function dimReduceNMF(mat_path::String,k::Array{Int64},deg_f::Int64,to_impute::B
     x = [0,maximum(ci_poly_x)]
     bonf_y = repeat([-log10(bonferroni(nrow(all_p)))],2)
     fdr_y = repeat([-log10(FDR(all_p[!,:gamma_p]))],2)
+    println("Bonferroni: $(bonf_y[1])")
+    println("FDR: $(fdr_y[1])")
     qq = Plots.plot(Shape(ci_poly_x,ci_poly_y),color=:grey,alpha=0.5,xlabel="-log10(Expected P)",ylabel = "-log10(observed P)",margin=7Plots.mm,grid=false)
     qq = Plots.plot!(x,x,color = :grey) #,lims=(0,maximum(-log10.(results[!,:corr_pval])))
     qq = Plots.plot!(x,bonf_y,color = :red)
