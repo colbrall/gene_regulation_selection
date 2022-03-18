@@ -9,4 +9,6 @@ new.pos<-scan(args[3])
 mapfun<-approxfun(map[,4], map[,3], rule=2)
 new.map<-mapfun(new.pos)
 new.map.file<-data.frame(chr=chr, id=".", map=new.map, pos=new.pos)
+
+new.map.file$pos <- format(new.map.file$pos, scientific = FALSE)
 write.table(new.map.file, args[4], row.name=F, col.name=F, sep="\t", quote=F)
