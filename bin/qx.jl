@@ -179,6 +179,7 @@ function runBSUB(outdir::String,commands::Array{String,1},n::Int64,genes_per_job
     bsub_path = "$(outdir)$(name)$(n-(genes_per_job)+1)-$(n).bsub"
     open(bsub_path,"w") do outf
         write(outf,"#!/bin/bash\n")
+        write(outf,"#BSUB -M 1000")
         write(outf,"#BSUB -J qx$(n-genes_per_job+1)-$(n)\n")
         write(outf,"#BSUB -o $(outdir)$(name)$(n+1-genes_per_job)-$(n).out\n")
         write(outf,"#BSUB -e $(outdir)$(name)$(n+1-genes_per_job)-$(n).err\n\n")
@@ -244,7 +245,7 @@ function QxByGene(db_path::String,match_path::String,freq_path::String,pop_tags:
                 p_coms = vcat(p_coms,[command])
                 rn += 1
             end
-            runBSUB(outdir,p_coms,rn,length(p_coms),"$(gene)_rand")
+            runBSUB(outdir,p_coms,rn-1,length(p_coms),"$(gene)_rand")
         end
     end
     runBSUB(outdir,commands,n-1,length(commands),"genes") #to catch the last few genes
