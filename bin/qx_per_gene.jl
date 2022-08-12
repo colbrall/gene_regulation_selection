@@ -47,7 +47,7 @@ end
 function centerScaleAFMatrix(M::Int64)
     T = fill(-1/M,(M-1,M))# M-1 x M matrix. (M-1)/M on diagonal,-1/M everywhere else
     T[diagind(T)] .= (M-1)/M
-### Iain's code does this, then he thinks has an option to center on subset of pops instead of all
+    ### Iain's code does this, then he thinks has an option to center on subset of pops instead of all
     return T
 end
 
@@ -73,21 +73,14 @@ end
 # calculates Qx statistic
 function Qx(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Transpose{Float64,Array{Float64,2}},matched_freqs::Array{Float64,2})
     z = [2*sum(snp_betas * snp_freqs[:,i]) for i in 1:size(snp_freqs)[2]] # calculating mean genetic values for each population
-    # println("Z: $z")
     z_prime = centerScaleAFMatrix(length(z)) * z # estimated genetic values for the first M-1 populations, centered at the mean
-    # println("Z': $z_prime")
     va = scalingFactor(snp_betas,snp_freqs)
-    # println("Va: $va")
+
     f = neutralCovarianceMatrix(matched_freqs)
-    # display(f)
-    # println()
     c = cholesky(Hermitian(f)).L #was crashing initially due to rounding error in f making it look non-Hermitian
-    # display(c)
-    # println()
+
     x = 1/(sqrt(2*va))*inv(c)*z_prime
-    # println("x: $x")
     qx=transpose(x) * x
-    # println("Qx: $qx")
     return qx
 end
 
@@ -104,9 +97,7 @@ function main()
     all_freqs = readFloatDelim(parsed_args["frequencies"],"\t")
 
     snp_freqs = transpose(all_freqs[1:end,1:num_snps])
-    # println(size(snp_freqs))
     matched_freqs = all_freqs[1:end,(num_snps+1):end]
-    # println(size(matched_freqs))
 
     qx = Qx(snp_betas,snp_freqs,matched_freqs)
     open(qx_path,"a") do outf
