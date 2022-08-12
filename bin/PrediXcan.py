@@ -3,6 +3,7 @@
 # modified by Laura Colbran to fix ref/alt bug Nov. 2017
 # modified by Laura Colbran to handle NA values in dosages July 2019
 # modified by LC to add function to make complements for indels. Dec. 2019
+# modified by LC to assume all ambiguous flips are allele flips and to skip any mismatches. Aug 2022
 
 import argparse
 from collections import defaultdict
@@ -49,8 +50,9 @@ def get_all_dosages(dosage_dir, dosage_prefix, dbuffer=None):
             arr = line.strip().split()
             rsid = arr[1]
             refallele = arr[3]
+            altallele = arr[4]
             dosage_row = np.array(map(lambda x: 0.0 if x=='NA' else x, arr[6:]), dtype=np.float)
-            yield rsid, refallele, dosage_row
+            yield rsid, refallele, altallele, dosage_row
 
 
 class WeightsDB:
@@ -73,7 +75,7 @@ class GetApplicationsOf:
         if preload_weights:
             print datetime.datetime.now(), "Preloading weights..."
             self.tuples = defaultdict(list)
-            for tup in self.db.query("SELECT rsid, gene, weight, ref_allele FROM weights"):
+            for tup in self.db.query("SELECT rsid, gene, weight, ref_allele, eff_allele FROM weights"):
                 self.tuples[tup[0]].append(tup[1:])
         else:
             self.tuples = None
@@ -83,7 +85,7 @@ class GetApplicationsOf:
             for tup in self.tuples[rsid]:
                 yield tup
         else:
-            for tup in self.db.query("SELECT gene, weight, ref_allele FROM weights WHERE rsid=?", (rsid,)):
+            for tup in self.db.query("SELECT gene, weight, ref_allele, eff_allele FROM weights WHERE rsid=?", (rsid,)):
                 yield tup
 
 
@@ -107,16 +109,17 @@ class TranscriptionMatrix:
             comp += self.complements[ch]
         return comp
 
-    def update(self, gene, weight, ref_allele, allele, dosage_row):
+    def update(self, gene, weight, ref_allele, allele, eff_allele, alt_allele, dosage_row):
         if self.D is None:
             self.gene_list = self.get_gene_list()
             self.gene_index = { gene:k for (k, gene) in enumerate(self.gene_list) }
             self.D = np.zeros((len(self.gene_list), len(dosage_row))) # Genes x Cases
         if gene in self.gene_index: #assumes strands are aligned to PrediXcan reference and dosage coding 0 to 2
-            if ref_allele == allele or self.getComplements(ref_allele) == allele: # assumes non-ambiguous SNPs to resolve strand issues:
+            if ref_allele == allele and eff_allele == alt_allele:
                 self.D[self.gene_index[gene],] += dosage_row * weight
-            else:
+            elif ref_allele == alt_allele and eff_allele == allele: #swap dosage around for allele flips
                 self.D[self.gene_index[gene],] += (2-dosage_row) * weight # Update all cases for that gene
+
 
 
     def get_samples(self):
@@ -204,10 +207,10 @@ def main():
     if not os.path.exists(PRED_EXP_FILE) and PREDICT:
         get_applications_of = GetApplicationsOf(BETA_FILE, PRELOAD_WEIGHTS)
         transcription_matrix = TranscriptionMatrix(BETA_FILE, SAMPLE_FILE, GENE_LIST)
-        for rsid, allele, dosage_row in get_all_dosages(DOSAGE_DIR, DOSAGE_PREFIX, DOSAGE_BUFFER):
-            for gene, weight, ref_allele in get_applications_of(rsid):
+        for rsid, allele, alt_allele, dosage_row in get_all_dosages(DOSAGE_DIR, DOSAGE_PREFIX, DOSAGE_BUFFER):
+            for gene, weight, ref_allele, eff_allele in get_applications_of(rsid):
                 #print(gene)
-                transcription_matrix.update(gene, weight, ref_allele, allele, dosage_row)
+                transcription_matrix.update(gene, weight, ref_allele, allele, eff_allele, alt_allele, dosage_row)
         transcription_matrix.save(PRED_EXP_FILE)
     if ASSOC:
         subprocess.call(
