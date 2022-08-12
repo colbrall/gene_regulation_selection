@@ -210,6 +210,10 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
     outdir = "$(splitext(db_path)[1])/"
     if !isdir(outdir) mkdir(outdir) end
     genes,all_eff_sizes = parseDB(db_path) # Dict{gene => [(id,weight)]}
+    if !haskey(genes,gene)
+        println("Gene not in db. Quitting.")
+        exit()
+    end
     n = 1
     commands = String[]
     coord_ids = mapIDs(DBSNP_FILE)
