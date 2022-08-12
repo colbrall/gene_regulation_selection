@@ -258,7 +258,7 @@ function geneHeatMap(qx_paths::Array{String,1},samp_path::String,tiss_order::Arr
         start_ind = 1
         for grp in 1:length(GROUP_SIZES)
             tmp = mat[start_ind:start_ind+GROUP_SIZES[grp]-1,:]
-            new_mat[grp,:] =  [mean(tmp[findall(x->x!=-100.0,tmp[:,pop]),pop]) for pop in 1:length(pop_order)] #avg prediction
+            new_mat[grp,:] =  [median(tmp[findall(x->x!=-100.0,tmp[:,pop]),pop]) for pop in 1:length(pop_order)] #avg prediction
             new_cols[grp] = tiss_label_colors[start_ind]
             if scale
                 new_alphas[grp] = maximum(alphas[start_ind:start_ind+GROUP_SIZES[grp]-1]) #pick largest alpha for display

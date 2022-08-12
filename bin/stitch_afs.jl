@@ -3,8 +3,7 @@
 # @author laura colbran
 # super-ugly code to stitch vcftools frequency files together. not generalizable.
 
-
-function main()
+function thousGensMAF()
     chrs = 1:1:22
     for CHR in chrs
         # files for each population
@@ -53,7 +52,44 @@ function main()
                 write(outf,"$(full_line)\n")
             end
         end
+
     end
+end
+
+function hgdpMAF()
+    chrs = 1:1:22
+    for CHR in chrs
+        AFR = eachline(open("chr$(CHR).AFRICA.frq"))
+        OCE = eachline(open("chr$(CHR).OCEAN.frq"))
+        AMER = eachline(open("chr$(CHR).AMER.frq"))
+        EURO = eachline(open("chr$(CHR).EURO.frq"))
+        CS_ASIA = eachline(open("chr$(CHR).CS_ASIA.frq"))
+        M_EAST = eachline(open("chr$(CHR).M_EAST.frq"))
+        E_ASIA = eachline(open("chr$(CHR).E_ASIA.frq"))
+
+        files_to_stitch = zip(AFR,AMER,EURO,M_EAST,CS_ASIA,E_ASIA,OCE)
+        POPS = join(["AFRICA","AMER","EURO","M_EAST","CS_ASIA","E_ASIA","OCEAN"],"\t")
+        
+        open("chr$(CHR).ALL.frq","w") do outf
+            write(outf,"CHROM\tPOS\tN_ALLELES\tN_CHR\t$(POPS)\n")
+            for line in files_to_stitch
+                if startswith(line[1],"CHROM") continue end
+                base_line = split(line[1],"\t")
+                base_line[5] = join(base_line[5:end],",")
+                deleteat!(base_line,6:length(base_line))
+                for pop in line[2:end]
+                    base_line = vcat(base_line,join(split(pop,"\t")[5:end],","))
+                end
+                full_line = join(base_line,"\t")
+                write(outf,"$(full_line)\n")
+            end
+        end
+    end
+end
+
+function main()
+    # thousGensMAF()
+    hgdpMAF()
 end
 
 main()
