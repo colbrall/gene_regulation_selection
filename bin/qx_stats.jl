@@ -12,7 +12,7 @@ using Plots,Seaborn
 
 COLOURS = ["#b93e0f","#a1c6d8","#5f3912","#feae02","#6b878f","#c6d737","#171b17","#fe8515","#b7c1c2","#9a5611"]
 Seaborn.set(style="white", palette="muted")
-HEADER = ["gene","numsnps","qx"]
+HEADER = ["gene","tissue","qx","genename"]
 ENV["GKSwstype"] = "100" #fixes a segfault bug in GR backend for Plots.jl: https://discourse.julialang.org/t/generation-of-documentation-fails-qt-qpa-xcb-could-not-connect-to-display/60988
 
 function parseCommandLine()
@@ -257,8 +257,8 @@ end
 function main()
     parsed_args = parseCommandLine()
     if parsed_args["empirical_p"]
-        df = CSV.read(parsed_args["qx"],DataFrame;header=HEADER)
-
+        df = CSV.read(parsed_args["qx"],DataFrame;header=HEADER,comment="#")
+        println(first(df,6))
         # plot Qx distribution
         distplot = Seaborn.kdeplot(filter(!isnan,df[!,:qx]))
         xlabel("Qx")
