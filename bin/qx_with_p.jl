@@ -259,9 +259,8 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
                 prec_n = 10*res_n
                 rand_qx = vcat(rand_qx,zeros(Float64,prec_n-res_n))
                 for samp in (res_n+1):prec_n
-                    rand_betas = zeros(Float64,num_snps)
-                    rand_betas[pos_inds] = sample(RNG,pos_effs,length(pos_inds))
-                    rand_betas[neg_inds] = sample(RNG,neg_effs,length(neg_inds))
+                    rand_betas = sample(RNG,all_eff_sizes,num_snps)
+                    rand_betas = rand_betas .* transpose(signs)
                     rand_qx[samp] = Qx(transpose(rand_betas[:]),snp_freqs,c)
                 end
                 pval = length(filter(x-> x >= qx,rand_qx))/prec_n
