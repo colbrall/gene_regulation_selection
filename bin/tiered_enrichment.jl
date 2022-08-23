@@ -5,7 +5,7 @@
 
 using ArgParse
 using DataFrames,CSV
-using HypothesisTests,Plots
+using HypothesisTests,Plots,StatsBase,Statistics
 
 ENV["GKSwstype"] = "100"
 
@@ -29,6 +29,9 @@ function parseCommandLine()
             arg_type = Int64
             nargs = '*'
             default = [10,20,30,50,75,100,150,200,300,500,1000,2000,3000,5000,10000]
+        "--num_perm","-n"
+            arg_type = Int64
+            default =100
         "--out_path","-o"
             help = "path prefix for output"
             arg_type = String
@@ -49,7 +52,27 @@ function readSet(path::String)
     return gs
 end
 
-function enrichment(list_path::String,col::Int64,reverse::Bool,set_path::String,points::Array{Int64,1},out_dir::String)
+function confInt95(gene_list::Array{String,1}, gene_set::Set{String},samp::Int64, N::Int64,true_enr::Float64,prop_overall::Float64)
+    props = zeros(Float64,N)
+    for i in 1:N
+        s = sample(gene_list,samp,replace=true)
+        props[i] = length(findall(x->in(x,gene_set),s))/samp
+    end
+    props = props./prop_overall
+    sort!(props)
+    low_ind = 1
+    up_ind = N
+    if (N - 0.95*N)%2 == 0
+        low_ind = Int64((N - 0.95*N)/2) + 1
+        up_ind = N - Int64((N - 0.95*N)/2)
+    else
+        low_ind = Int64(round((N - 0.95*N)/2,RoundUp))
+        up_ind = Int64(round(N - (N - 0.95*N)/2,RoundDown))
+    end
+    return props[up_ind],props[low_ind]
+end
+
+function enrichment(list_path::String,col::Int64,reverse::Bool,set_path::String,num_perm::Int64,points::Array{Int64,1},out_dir::String)
     gene_df = CSV.read(list_path,DataFrame)
     # println(first(gene_df,10))
     if col != 0
@@ -66,25 +89,30 @@ function enrichment(list_path::String,col::Int64,reverse::Bool,set_path::String,
     ints = nrow(gene_df[findall(x->in(x,g_set),gene_df[!,1]),:])
     prop_overall = ints/nrow(gene_df)
     println("Total Intersection: $(ints) ($(100*prop_overall)%)")
-    enr = DataFrames.DataFrame(cutoffs = vcat([nrow(gene_df)],points),prop=repeat([prop_overall],length(points)+1),enr = repeat([1.0],length(points)+1),pval=repeat([-1.0],length(points)+1))
+    enr = DataFrames.DataFrame(cutoffs = vcat([nrow(gene_df)],points),prop=repeat([prop_overall],length(points)+1),enr = repeat([1.0],length(points)+1),up_ci = repeat([1.0],length(points)+1),low_ci = repeat([1.0],length(points)+1),pval=repeat([-1.0],length(points)+1))
     for cutoff in points
         tmp = gene_df[1:cutoff,:]
         n_succ = nrow(tmp[findall(x->in(x,g_set),tmp[!,1]),:])
+        e = (n_succ/nrow(tmp))/prop_overall
         enr[findall(x->x==cutoff,enr[:,:cutoffs]),:prop] .= n_succ/nrow(tmp)
-        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:enr] .= (n_succ/nrow(tmp))/prop_overall
+        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:enr] .= e
+        up_ci,low_ci = confInt95(tmp[:,1],g_set,cutoff,num_perm,e,prop_overall)
+        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:up_ci] .= up_ci
+        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:low_ci] .= low_ci
         enr[findall(x->x==cutoff,enr[:,:cutoffs]),:pval] .= pvalue(BinomialTest(n_succ,nrow(tmp),prop_overall))
     end
     sort!(enr,:cutoffs)
     println(enr)
     delete!(enr,nrow(enr))
-    enr_plot = Plots.plot(enr[:,:cutoffs],repeat([1.0],nrow(enr)),color = :grey,xlabel="Cutoff",ylabel = "Enrichment",margin=7Plots.mm,grid=false)
-    enr_plot = Plots.scatter!(enr[:,:cutoffs],enr[:,:enr],legend = false,color = :black, alpha = 0.5,markersize=5)
+    enr_plot = Plots.plot(enr[:,:cutoffs],repeat([1.0],nrow(enr)),color = :grey,xlabel="Cutoff",ylabel = "Enrichment",margin=7Plots.mm,grid=false, xscale=:log10)
+    enr_plot = Plots.plot!(enr[:,:cutoffs],enr[:,:enr],legend = false,color = :black, alpha = 0.5,markersize=5, xscale=:log10)
+    enr_plot = Plots.plot!(enr[:,:cutoffs],enr[:,:up_ci],legend = false,color = :black, alpha = 0.5,markersize=5,fillrange=enr[:,:low_ci], xscale=:log10)
     Plots.savefig("$(out_dir)enrplot.pdf")
 end
 
 function main()
     parsed_args = parseCommandLine()
-    enrichment(parsed_args["gene_list"],parsed_args["column"],parsed_args["reverse"],parsed_args["gene_set"],parsed_args["test_points"],parsed_args["out_path"])
+    enrichment(parsed_args["gene_list"],parsed_args["column"],parsed_args["reverse"],parsed_args["gene_set"],parsed_args["num_perm"],parsed_args["test_points"],parsed_args["out_path"])
 end
 
 main()
