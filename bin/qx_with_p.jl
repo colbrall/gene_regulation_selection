@@ -1,14 +1,13 @@
-# qx_per_gene.jl
+# qx_with_p.jl
 #
 # @author Laura Colbran 2021-07-16
-# utility script called by qx.jl.
 # julia 1.5
 
 using ArgParse,SQLite,GZip
 using Dates
 using StatsBase,LinearAlgebra,Random
 
-RNG = MersenneTwister(1234)
+RNG = MersenneTwister(1234) #sampling algorithm, and a seed
 SNP_COL = :rsid #saving variable model DB uses
 GENE_COL = :gene #saving variable model DB uses
 WEIGHT_COL = :weight #saving variable model DB uses
@@ -37,8 +36,11 @@ function parseCommandLine()
             arg_type = String
             nargs='*'
             default = ["AFR", "AMR","EUR","EAS","SAS"]
-        "--pvalue"
+        "--eff_perm"
             help = "if you want to calculate p-value by resampling effect sizes"
+            action=:store_true
+        "--af_perm"
+            help = "if you want to calculate p-value by resampling allele frequencies"
             action=:store_true
         "--resample_n","-r"
             help = "number of times to resample for p-value"
@@ -118,9 +120,15 @@ end
 function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String,1})
     # initiate fqcy matrix
     freqs = zeros(Float64,length(pop_tags),length(snps))
+    snps = snps[findall(x->length(x) > 0,snps)]
+    # for snp in snps
+    #     println(split(split(snp,"_")[1],"r"))
+    #     a =split(split(snp,"_")[1],"r")[2]
+    # end
     chrs = [split(split(snp,"_")[1],"r")[2] for snp in snps]
     positions = [join(split(snp,"_")[1:2],"_") for snp in snps]
     alts = [split(snp,"_")[4] for snp in snps]
+
     #build tabix regions file
     tmp_file = "tmp.regions.$(Dates.now())" #naming so that parallel jobs don't collide
     open(tmp_file,"w") do outf
@@ -206,7 +214,7 @@ function Qx(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Transpose{
     return qx
 end
 
-function readInput(gene::String,db_path::String,match_path::String,freq_path::String,pop_tags::Array{String,1},pvalue::Bool,res_n::Int64)
+function readInput(gene::String,db_path::String,match_path::String,freq_path::String,pop_tags::Array{String,1},eff_perm::Bool,af_perm::Bool,res_n::Int64)
     outdir = "$(splitext(db_path)[1])/"
     if !isdir(outdir) mkdir(outdir) end
     genes,all_eff_sizes = parseDB(db_path) # Dict{gene => [(id,weight)]}
@@ -244,7 +252,7 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
         qx = Qx(snp_betas,snp_freqs,c)
         outline = "$(gene)\t$(num_snps)\t$qx"
 
-        if pvalue
+        if eff_perm
             #resample from all_eff_sizes and add to command
             all_eff_sizes = abs.(all_eff_sizes)
             signs = sign.(snp_betas)
@@ -267,6 +275,29 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
             end
             outline = "$(outline)\t$(pval)"
         end
+
+        if af_perm
+            #resample from all_eff_sizes and add to command
+            all_snps = coordinateID(coord_ids,["$(snp[1])" for g in keys(genes) for snp in genes[g]],[snp[3] for g in keys(genes) for snp in genes[g]],[snp[4] for g in keys(genes) for snp in genes[g]])
+            all_afs,zero_inds = pullFreqs(all_snps,freq_path,pop_tags)
+            all_afs = all_afs[:,setdiff(1:end, zero_inds)]
+            rand_qx = zeros(Float64,res_n)
+            for samp in 1:res_n
+                rand_freqs = transpose(all_afs[:,sample(RNG,1:size(all_afs,2),num_snps)])
+                rand_qx[samp] = Qx(snp_betas,rand_freqs,c)
+            end
+            pval = length(filter(x-> x >= qx,rand_qx))/res_n
+            if pval < 1/(res_n/10) #if it's a very small p-value, give it an order of magnitude more precision
+                prec_n = 10*res_n
+                rand_qx = vcat(rand_qx,zeros(Float64,prec_n-res_n))
+                for samp in (res_n+1):prec_n
+                    rand_freqs = transpose(all_afs[:,sample(RNG,1:size(all_afs,2),num_snps)])
+                    rand_qx[samp] = Qx(snp_betas,rand_freqs,c)
+                end
+                pval = length(filter(x-> x >= qx,rand_qx))/prec_n
+            end
+            outline = "$(outline)\t$(pval)"
+        end
         # println(outline )
         write(outf,"$(outline)\n")
     end
@@ -274,7 +305,7 @@ end
 
 function main()
     parsed_args = parseCommandLine()
-    readInput(parsed_args["gene"],parsed_args["db"],parsed_args["matched_snps"],parsed_args["pop_freqs"],parsed_args["pop_tags"],parsed_args["pvalue"],parsed_args["resample_n"])
+    readInput(parsed_args["gene"],parsed_args["db"],parsed_args["matched_snps"],parsed_args["pop_freqs"],parsed_args["pop_tags"],parsed_args["eff_perm"],parsed_args["af_perm"],parsed_args["resample_n"])
 end
 
 main()
