@@ -96,10 +96,12 @@ function enrichment(list_path::String,col::Int64,reverse::Bool,set_path::String,
         e = (n_succ/nrow(tmp))/prop_overall
         enr[findall(x->x==cutoff,enr[:,:cutoffs]),:prop] .= n_succ/nrow(tmp)
         enr[findall(x->x==cutoff,enr[:,:cutoffs]),:enr] .= e
-        up_ci,low_ci = confInt95(tmp[:,1],g_set,cutoff,num_perm,e,prop_overall)
-        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:up_ci] .= up_ci
-        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:low_ci] .= low_ci
-        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:pval] .= pvalue(BinomialTest(n_succ,nrow(tmp),prop_overall))
+        # up_ci,low_ci = confInt95(tmp[:,1],g_set,cutoff,num_perm,e,prop_overall)
+        bi_test = BinomialTest(n_succ,nrow(tmp),prop_overall)
+        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:up_ci] .= confint(bi_test,method=:agresti_coull)[2]/prop_overall
+        low_ci = confint(bi_test,method=:agresti_coull)[1]/prop_overall
+        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:low_ci] .= ifelse(low_ci>0,low_ci,0) #because enrichments can't be negative
+        enr[findall(x->x==cutoff,enr[:,:cutoffs]),:pval] .= pvalue(bi_test)
     end
     sort!(enr,:cutoffs)
     println(enr)
