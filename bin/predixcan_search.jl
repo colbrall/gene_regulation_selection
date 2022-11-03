@@ -43,7 +43,11 @@ function geneSearch(dbs::Array{String,1},gene_file::String,col::Int64)
 				db_name = join(split(basename(db),".")[1:(end-1)],".")
 				model = DataFrame(DBInterface.execute(SQLite.DB(db),q))
 				for r in 1:nrow(model)
-					println("$(l[col])\t$(db_name)\t$(model[r,Symbol("n.snps.in.model")])\t$(model[r,Symbol("pred.perf.R2")])")
+					try
+						println("$(l[col])\t$(db_name)\t$(model[r,Symbol("n.snps.in.model")])\t$(model[r,Symbol("pred.perf.R2")])")
+					catch err
+						println("$(l[col])\t$(model[r,Symbol("tissue")])\t$(model[r,Symbol("snps")])\t$(model[r,Symbol("R2")])")
+					end
 				end
 			end
 		end
