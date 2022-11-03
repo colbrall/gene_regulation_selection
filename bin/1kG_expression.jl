@@ -9,7 +9,7 @@
 
 using ArgParse,GZip,SQLite
 using DataFrames,CSV
-using StatsBase,HypothesisTests
+using StatsBase,Distributions
 using Seaborn
 
 #set plotting defaults
@@ -59,6 +59,12 @@ function parseCommandLine()
             arg_type = String
     end
     return parse_args(s)
+end
+
+function corP(r::Float64,n::Int64)
+    z = atanh(r) * sqrt(n-3) #works for stdev = 1
+    p = 2*exp(BigFloat(logccdf(Normal(),z))) #calculate on ln scale for more precision in very small p-values
+    return z,p #pvalue(OneSampleZTest(atanh(r), 1, n-3)) is the equivalent old version, but can't pull z scores from this
 end
 
 # returns dict of group=>samp_ids
@@ -312,7 +318,7 @@ function plotSwarm(expr_path::String,samp_path::String,id_map::String,pred_path:
                 rho = corspearman(gene_res[!,Symbol("$(gene)_pred")],gene_res[!,gene])
                 if !isnan(rho)
                     rhos = push!(rhos,[gene,rho])
-                    p = pvalue(OneSampleZTest(atanh(rho), 1, nrow(gene_res)))
+                    z,p = corP(rho,nrow(gene_res))
                     write(outf,"$(gene)\t$(rho)\t$(p)\n")
                 else
                     write(outf,"$(gene)\tNA\tNA\n")
@@ -334,12 +340,12 @@ function plotSwarm(expr_path::String,samp_path::String,id_map::String,pred_path:
     rhos = innerjoin(rhos,model_stats,on=:gene)
     println("Num. with both: $(nrow(rhos))\n")
     rho = corspearman(rhos[!,:rho],rhos[!,:nsnps])
-    p = pvalue(OneSampleZTest(atanh(rho), 1, nrow(rhos)))
-    println("NumSNPs corr: rho=$(rho), p=$(p)")
+    z,p = corP(rho,nrow(rhos))
+    println("NumSNPs corr: rho=$(rho), p=$(p) (z=$z)")
 
     rho = corspearman(rhos[!,:rho],rhos[!,:predR2])
-    p = pvalue(OneSampleZTest(atanh(rho), 1, nrow(rhos)))
-    println("R2 corr: rho=$(rho), p=$(p)")
+    z,p = corP(rho,nrow(rhos))
+    println("R2 corr: rho=$(rho), p=$(p) (z=$z)")
     s_plot = scatterplot(x=rhos[!,:predR2],y=rhos[!,:rho],color=:black,alpha=0.5,size=1)
     s_plot.set_ylabel("Expr. Rho")
     s_plot.set_ylabel("Training R2")
