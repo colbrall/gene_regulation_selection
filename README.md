@@ -35,7 +35,7 @@ match_snps.jl<br />
 &nbsp;&nbsp;&nbsp;&nbsp;for each JTI model SNP, selects a random number in the same AF bin in GTEx
   
 PrediXcan.py<br />
-&nbsp;&nbsp;&nbsp;&nbsp;given dosage files and a db, predicts gene expression for each individual
+&nbsp;&nbsp;&nbsp;&nbsp;given dosage files and a db, predicts gene expression for each individual. Adapted from old script here: https://github.com/hakyimlab/PrediXcan/tree/master/Software
   
 predixcan_search.jl<br />
 &nbsp;&nbsp;&nbsp;&nbsp;searches dbs for genes or SNPs
