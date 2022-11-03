@@ -21,7 +21,7 @@ for chr in {1..22}; do
   ./../bin/liftOver tmp/liftover/chr${chr}_${pop}.bed ${chain} tmp/liftover/panTro_chr${chr}_${pop}.bed tmp/liftover/unlifted_chr${chr}_${pop}.bed
 
 # polarize
-  Rscript ./bin/ancestral_match.R tmp/liftover/panTro_chr${chr}_${pop}.bed tmp/liftover/unlifted_chr${chr}.bed tmp/iHS/1kG_chr${chr}_${pop}.vcf.gz ${pop}
+  Rscript ./bin/ancestral_match.R tmp/liftover/panTro_chr${chr}_${pop}.bed tmp/liftover/unlifted_chr${chr}_${pop}.bed tmp/iHS/1kG_chr${chr}_${pop}.vcf.gz ${pop}
   awk '{print $1}' tmp/chr${chr}_${pop}_AA.txt | grep ^rs > tmp/liftover/chr${chr}_${pop}_AA_filter.txt
   plink2 --vcf tmp/iHS/1kG_chr${chr}_${pop}.vcf.gz --extract tmp/liftover/chr${chr}_${pop}_AA_filter.txt --ref-allele force tmp/chr${chr}_${pop}_AA.txt --recode vcf --out tmp/iHS/chr${chr}_${pop}_AA_filtered
   bgzip -f tmp/iHS/chr${chr}_${pop}_AA_filtered.vcf
