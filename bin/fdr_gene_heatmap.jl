@@ -95,31 +95,39 @@ function calcMatEmpP(expr::Array{Float64,2},pred::Array{Float64,2},num_perms::In
 end
 
 function main()
-    gene_order = ["ENSG00000124299","ENSG00000145220","ENSG00000115677","ENSG00000167306","ENSG00000173391",
-                    "ENSG00000073331","ENSG00000174672","ENSG00000145979","ENSG00000130590","ENSG00000166263"]
-    # gene_order = ["ENSG00000149485","ENSG00000204531","ENSG00000204614","ENSG00000160886","ENSG00000204366"]
-    gene_names = ["PEPD","LYAR","HDLBP","MYO5B","OLR1","ALPK1","BRSK2","TBC1D7","SAMD10","STXBP4"]
-    # gene_names = ["FADS1","POU5F1","TRIM40","LY6K","ZBTB12"]
-
-    acc_id_path = "../../data/1000g/geuvadis_expression/run_accession_to_1kG_id.txt"
-    preds_dir = "results/1kG_v8_JTI_predictions/"
-    preds_suff = "_elasticNet0_0.5.full.gz"
-    preds_order = repeat(["BestModels"],length(gene_names))
-    samp_path = "../data/1kG_pops/1kG_populations.txt"
-    expr_path = "../../data/1000g/geuvadis_expression/genes.tpm.featurecounts.tsv"
-    pop_order= ["YRI","ASW","MSL","ESN","LWK","ACB","GWD","CEU","FIN","TSI","IBS","GBR",
-                    "CHB","JPT","CHS","CDX","KHV","GIH","PJL","BEB","ITU","STU",
-                    "PUR","PEL","MXL","CLM"]
-    pop_label_colors= vcat(repeat(["#946bb3"],7),vcat(repeat(["#4f7ac9"],5),
-        vcat(repeat(["#d48c63"],5),vcat(repeat(["#c86f6f"],5),repeat(["#74c46e"],4)))))
-
-    # preds_dir = "results/HGDP_v8_JTI_predictions/"
+    gene_order = ["ENSG00000115677","ENSG00000145979","ENSG00000130590","ENSG00000166263",
+                "ENSG00000116903","ENSG00000142621","ENSG00000084072","ENSG00000048140"]
+    gene_names = ["HDLBP","TBC1D7","SAMD10","STXBP4","EXOC8","FHAD1","PPIE","TSPAN17"] #effPerm FDR<0.05 genes
+    # gene_order = ["ENSG00000103510","ENSG00000167394","ENSG00000169896","ENSG00000099365",
+    #             "ENSG00000167395"]
+    # gene_names = ["KAT8","ZNF668","ITGAM","STX1B", "ZNF646"] #KAT8 peak genes that replicate (FDR < 0.1) in 1kG and HGDP
+    # gene_order = ["ENSG00000188322","ENSG00000197165"]
+    # gene_names = ["SBK1","SULT1A2"] #sbk1 peak genes that replicate
+    # gene_order = ["ENSG00000177414","ENSG00000117697","ENSG00000138030","ENSG00000152128","ENSG00000174123",
+    #             "ENSG00000204967","ENSG00000179344","ENSG00000127399","ENSG00000253958","ENSG00000160886","ENSG00000151746",
+    #             "ENSG00000149485","ENSG00000188243","ENSG00000140386","ENSG00000103510","ENSG00000140995",
+    #             "ENSG00000141736","ENSG00000141452","ENSG00000104972","ENSG00000100412"]
+    # gene_names = ["UBE2U","NSL1","KHK","TMEM163","TLR10","PCDHA4","HLA-DQB1","LRRC61","CLDN23","LY6K",
+    #             "BICD1","FADS1","COMMD6","SCAPER","KAT8","DEF8","ERBB2","RMC1","LILRB1","ACO2"] #gamma top gene from each peak
+    # acc_id_path = "../../data/1000g/geuvadis_expression/run_accession_to_1kG_id.txt"
+    # preds_dir = "results/1kG_v8_JTI_predictions/"
     # preds_suff = "_elasticNet0_0.5.full.gz"
     # preds_order = repeat(["BestModels"],length(gene_names))
-    # samp_path = "../data/HGDP_pops/hgdp_pops.txt"
-    # expr_path = "../../data/HGDP/merged_sample_gene_fpkm_table.txt"
-    # pop_order= ["AFRICA","EURO","M_EAST","E_ASIA","CS_ASIA","OCEAN","AMER"]
-    # pop_label_colors= ["#946bb3","#4f7ac9","#4fc9c5","#d48c63","#c86f6f","#c8c06f","#74c46e"]
+    # samp_path = "../data/1kG_pops/1kG_populations.txt"
+    # expr_path = "../../data/1000g/geuvadis_expression/genes.tpm.featurecounts.tsv"
+    # pop_order= ["YRI","ASW","MSL","ESN","LWK","ACB","GWD","CEU","FIN","TSI","IBS","GBR",
+    #                 "CHB","JPT","CHS","CDX","KHV","GIH","PJL","BEB","ITU","STU",
+    #                 "PUR","PEL","MXL","CLM"]
+    # pop_label_colors= vcat(repeat(["#946bb3"],7),vcat(repeat(["#4f7ac9"],5),
+    #     vcat(repeat(["#d48c63"],5),vcat(repeat(["#c86f6f"],5),repeat(["#74c46e"],4)))))
+
+    preds_dir = "results/HGDP_v8_JTI_predictions/"
+    preds_suff = "_elasticNet0_0.5.full.gz"
+    preds_order = repeat(["BestModels"],length(gene_names))
+    samp_path = "../data/HGDP_pops/hgdp_pops.txt"
+    expr_path = "../../data/HGDP/merged_sample_gene_fpkm_table.txt"
+    pop_order= ["AFRICA","EURO","M_EAST","E_ASIA","CS_ASIA","OCEAN","AMER"]
+    pop_label_colors= ["#946bb3","#4f7ac9","#4fc9c5","#d48c63","#c86f6f","#c8c06f","#74c46e"]
 
     groups = sampDict(samp_path,pop_order) # group -> sample IDs
     samples = String[]
@@ -246,7 +254,7 @@ function main()
     xlabel("Population")
     Seaborn.savefig("top_FDR_combined_heatmap.pdf")
     clf()
-
+    exit()
 
 
     samd10_expr = Float64[]
