@@ -5,23 +5,23 @@ using Seaborn
 Seaborn.set(style="white", palette="muted")
 COL_MAP = "coolwarm"
 
-NUM_OTHER_SCORES = 6
-ORDER = ["Best_Qx_P","gene_length","R2","NSNPs","O/E_LoF","PhyloP_100way","iHS","nSL"]
+NUM_OTHER_SCORES = 7
+ORDER = ["Corrected_P","Effect-Permuted","gene_length","R2","NSNPs","O/E_LoF","PhyloP_100way","iHS","nSL"]
 SCORE_DIRS = ["200kb"] #,"20kb","2kb","2Mb"
 
 function readQx()
     scores = Dict{String,Array{Float64,1}}() #gene -> [qx,ihs*SCORE_DIRS,nsl*SCORE_DIRS]. take the largest across tissues/pops
-    open("results/best_model_qx/all_qx_matchPosNeg_FDR.txt") do qx
+    open("results/best_model_qx/1kG_fixed/permuted_FDR.txt") do qx
       for line in eachline(qx)
         if startswith(line, "#gene") continue end
         l = split(chomp(line),"\t")
-        # qx = l[3]
-        qx = l[4]
+        qx = l[3] #because it's a rank correlation, -qx has the same value as the gamma p
+        p = l[4]
         # println("$(l[1]) $qx")
         if startswith(qx,"N")
             scores[l[1]] = repeat([-Inf],NUM_OTHER_SCORES+(2*length(SCORE_DIRS)))
         else
-            scores[l[1]] = vcat([parse(Float64,qx)],repeat([-Inf],NUM_OTHER_SCORES -1 + 2*length(SCORE_DIRS)))
+            scores[l[1]] = vcat([-parse(Float64,qx),parse(Float64,p)],repeat([-Inf],NUM_OTHER_SCORES - 2 + 2*length(SCORE_DIRS)))
         end
       end
     end
@@ -60,12 +60,12 @@ function readiHSnSL(scores::Dict{String,Array{Float64,1}})
 end
 
 function readLength(scores::Dict{String,Array{Float64,1}})
-    open("../data/gencode.v26.GRCh38.all_genes.bed") do inf
+    open("../data/gene_lists/gencode.v26.GRCh38.all_genes.bed") do inf
         for line in eachline(inf)
             l = split(chomp(line),'\t')
             gene = split(l[5],".")[1]
             if haskey(scores,gene)
-                scores[gene][2] = parse(Float64,l[3]) - parse(Float64,l[2])
+                scores[gene][3] = parse(Float64,l[3]) - parse(Float64,l[2])
             end
         end
     end
@@ -79,23 +79,23 @@ function readModels(scores::Dict{String,Array{Float64,1}})
         for row in 1:nrow(models)
             if !haskey(scores,models[row,:gene]) continue end
             if models[row,Symbol("R2")] > scores[models[row,:gene]][4]
-                scores[models[row,:gene]][3] = models[row,Symbol("R2")]
+                scores[models[row,:gene]][4] = models[row,Symbol("R2")]
             end
             if models[row,Symbol("snps")] > scores[models[row,:gene]][5]
-                scores[models[row,:gene]][4] = models[row,Symbol("snps")]
+                scores[models[row,:gene]][5] = models[row,Symbol("snps")]
             end
         end
     return scores
 end
 
 function readOELoF(scores::Dict{String,Array{Float64,1}})
-    GZip.open("../data/gnomad.v2.1.1.lof_metrics.by_gene.txt.gz") do inf
+    GZip.open("../data/gene_lists/gnomad.v2.1.1.lof_metrics.by_gene.txt.gz") do inf
         for line in eachline(inf)
             if startswith(line,"gene") continue end
             l = split(chomp(line),'\t')
             if (haskey(scores,l[64])) && (l[24] != "NA")
                 # scores[l[64]][2] = parse(Float64,l[66]) #to pull CDE length
-                scores[l[64]][5] = parse(Float64,l[24])
+                scores[l[64]][6] = parse(Float64,l[24])
             end
         end
     end
@@ -108,7 +108,7 @@ function readPhyloP(scores::Dict{String,Array{Float64,1}})
             l = split(chomp(line),"\t")
             gene = split(l[1],".")[1]
             if (haskey(scores,gene))
-                scores[gene][6] = parse(Float64,l[6])
+                scores[gene][7] = parse(Float64,l[6])
             end
         end
     end
@@ -185,18 +185,19 @@ function main()
         end
     end
     println("Num of genes total: $(length(all_genes))")
+    # println(keep_inds)
     all_genes = all_genes[keep_inds]
     score_array = score_array[keep_inds,:]
     println("Num of genes with all scores: $(length(all_genes))")
 
-    s_plot = scatterplot(score_array[:,findfirst(x->x=="iHS",ORDER)],score_array[:,findfirst(x->x=="Best_Qx_P",ORDER)],
+    s_plot = scatterplot(score_array[:,findfirst(x->x=="iHS",ORDER)],score_array[:,findfirst(x->x=="Corrected_P",ORDER)],
             color=:black,alpha=0.5)
     s_plot.set_ylabel("Best Qx P Value")
     s_plot.set_xlabel("iHS")
     Seaborn.savefig("ihs_qx_scatter.pdf")
     clf()
 
-    s_plot = scatterplot(score_array[:,findfirst(x->x=="gene_length",ORDER)],score_array[:,findfirst(x->x=="Best_Qx_P",ORDER)],
+    s_plot = scatterplot(score_array[:,findfirst(x->x=="gene_length",ORDER)],score_array[:,findfirst(x->x=="Corrected_P",ORDER)],
             color=:black,alpha=0.5)
     s_plot.set_ylabel("Best Qx P Value")
     s_plot.set_xlabel("Gene length")
