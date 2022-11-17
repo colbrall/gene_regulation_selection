@@ -5,7 +5,7 @@
 
 using ArgParse,SQLite,GZip
 using Dates
-using StatsBase,LinearAlgebra,Random
+using StatsBase,LinearAlgebra,Random, Statistics
 
 RNG = MersenneTwister(1234) #sampling algorithm, and a seed
 SNP_COL = :rsid #saving variable model DB uses
@@ -49,6 +49,9 @@ function parseCommandLine()
         "--gene","-g"
             help = "gene id for this run"
             arg_type = String
+        "--decompose"
+            help = "if you want to output the Fst and LD-based decomposition terms"
+            action=:store_true
     end
     return parse_args(s)
 end
@@ -119,7 +122,7 @@ end
 #pulls population freqencies for SNPs
 function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String,1})
     # initiate fqcy matrix
-    freqs = zeros(Float64,length(pop_tags),length(snps))
+    freqs = zeros(Float64,length(pop_tags),length(snps)) #pops x loci
     snps = snps[findall(x->length(x) > 0,snps)]
     # for snp in snps
     #     println(split(split(snp,"_")[1],"r"))
@@ -187,7 +190,7 @@ end
 # returns the scaling factor for the genetic values
 function scalingFactor(betas::Transpose{Float64,Array{Float64,1}},freqs::Transpose{Float64,Array{Float64,2}})
     epsilons = [mean(freqs[i,:]) for i in 1:size(freqs)[1]]
-    VA = 2*sum([betas[i]^2*epsilons[i]*(1-epsilons[i]) for i in 1:size(freqs)[1]]) ## iain has times 4 in his function for this bc he sets his va variable to equal 2*VA
+    VA = sum([betas[i]^2*epsilons[i]*(1-epsilons[i]) for i in 1:size(freqs)[1]]) ## iain has times 4 in his function for this bc he sets his va variable to equal 2*VA
     return VA
 end
 
@@ -203,18 +206,58 @@ function neutralCovarianceMatrix(freqs::Array{Float64,2})
     return F
 end
 
-# calculates Qx statistic
+# calculates Qx statistic. snp_betas is 1 x l, snp_freqs is l x m
 function Qx(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Transpose{Float64,Array{Float64,2}},c::LowerTriangular{Float64,Array{Float64,2}})
     z = [2*sum(snp_betas * snp_freqs[:,i]) for i in 1:size(snp_freqs)[2]] # calculating mean genetic values for each population
-    z_prime = centerScaleAFMatrix(length(z)) * z # estimated genetic values for the first M-1 populations, centered at the mean
+    T_mat = centerScaleAFMatrix(size(snp_freqs)[2])
+    z_prime = T_mat * z # estimated genetic values for the first M-1 populations, centered at the mean
     va = scalingFactor(snp_betas,snp_freqs)
-
-    x = 1/(sqrt(2*va))*inv(c)*z_prime
+    x = 1/(sqrt(4*va))*inv(c)*z_prime #equation 7
     qx=transpose(x) * x
+    println("OG Qx: $qx")
     return qx
 end
 
-function readInput(gene::String,db_path::String,match_path::String,freq_path::String,pop_tags::Array{String,1},eff_perm::Bool,af_perm::Bool,res_n::Int64)
+# calculates decomposition of Qx. snp_betas is 1 x l, snp_freqs is l x m
+function QxDecomp(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Transpose{Float64,Array{Float64,2}},c::LowerTriangular{Float64,Array{Float64,2}})
+    va = scalingFactor(snp_betas,snp_freqs)
+    println("VA: $va")
+    m = size(snp_freqs)[2] #num pops
+    l = size(snp_freqs)[1] #num loci
+    t_mat = centerScaleAFMatrix(m)
+
+    diag_effs = zeros(Float64,length(snp_betas),length(snp_betas))
+    diag_effs[diagind(diag_effs)] = snp_betas
+    contribs = transpose(snp_freqs) * diag_effs
+    std_contribs = inv(c) * t_mat * contribs
+    adj = transpose(std_contribs) * std_contribs
+    fst_comp = sum(diag(adj))/va
+    ld_comp = sum([adj[i] for i in CartesianIndices(adj) if i[1] != i[2]])/va
+    println("Matrix version: $fst_comp + $ld_comp = $(fst_comp + ld_comp)")
+
+    # decomposition according to the equations
+    # var_freqs = transpose([sum((inv(c)*t_mat *(snp_freqs[i,:].-mean(snp_freqs[i,:]))).^2) for i in 1:l]) # equations 8 and 14
+    # display(var_freqs)
+    # println()
+    # fst_comp = sum(snp_betas.^2 .* var_freqs) / va
+    # println("FST: $fst_comp")
+    #
+    # pair_cov_sum = 0.0
+    # for locus in 1:(l-1)
+    #     locus_freqs = inv(c)*t_mat*(snp_freqs[locus,:].-mean(snp_freqs[locus,:])) #m-1x1
+    #     for l_prime in locus+1:l
+    #         l_prime_freqs = inv(c)*t_mat*(snp_freqs[l_prime,:].-mean(snp_freqs[l_prime,:]))
+    #         pair_cov_sum += snp_betas[1,locus] * snp_betas[1,l_prime] * sum(locus_freqs .* l_prime_freqs)
+    #     end
+    # end
+    # ld_comp = 2*pair_cov_sum / va
+    # println("LD: $ld_comp")
+    # println("Non-matrix decomp Qx: $(ld_comp+fst_comp)")
+    return fst_comp, ld_comp
+end
+
+function readInput(gene::String,db_path::String,match_path::String,freq_path::String,pop_tags::Array{String,1},
+        eff_perm::Bool,af_perm::Bool,res_n::Int64,decomp::Bool)
     outdir = "$(splitext(db_path)[1])/"
     if !isdir(outdir) mkdir(outdir) end
     genes,all_eff_sizes = parseDB(db_path) # Dict{gene => [(id,weight)]}
@@ -237,12 +280,12 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
 
     matched_snps = readMatch(match_path,gene)
     all_freqs,zero_inds = pullFreqs(vcat(snp_arr,matched_snps),freq_path,pop_tags)
-    all_freqs = all_freqs[:,setdiff(1:end, zero_inds)] #remove all-zero-freq SNPs
+    all_freqs = all_freqs[:,setdiff(1:end, zero_inds)] #remove all-zero-freq SNPs. dims are pops x loci
 
-    snp_betas = transpose(betas[setdiff(1:end,zero_inds[findall(<(length(betas)+1),zero_inds)])])
+    snp_betas = transpose(betas[setdiff(1:end,zero_inds[findall(<(length(betas)+1),zero_inds)])]) #dims: 1 x loci
     num_snps = length(snp_betas)
 
-    snp_freqs = transpose(all_freqs[1:end,1:num_snps])
+    snp_freqs = transpose(all_freqs[1:end,1:num_snps]) #dims: loci x pops
     matched_freqs = all_freqs[1:end,(num_snps+1):end]
 
     f = neutralCovarianceMatrix(matched_freqs)
@@ -251,6 +294,11 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
     open(qx_path,"w") do outf
         qx = Qx(snp_betas,snp_freqs,c)
         outline = "$(gene)\t$(num_snps)\t$qx"
+
+        if decomp
+            fst_comp,ld_comp = QxDecomp(snp_betas,snp_freqs,c)
+            outline = "$(outline)\t$(fst_comp)\t$(ld_comp)"
+        end
 
         if eff_perm
             #resample from all_eff_sizes and add to command
@@ -298,6 +346,7 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
             end
             outline = "$(outline)\t$(pval)"
         end
+
         # println(outline )
         write(outf,"$(outline)\n")
     end
@@ -305,7 +354,8 @@ end
 
 function main()
     parsed_args = parseCommandLine()
-    readInput(parsed_args["gene"],parsed_args["db"],parsed_args["matched_snps"],parsed_args["pop_freqs"],parsed_args["pop_tags"],parsed_args["eff_perm"],parsed_args["af_perm"],parsed_args["resample_n"])
+    readInput(parsed_args["gene"],parsed_args["db"],parsed_args["matched_snps"],parsed_args["pop_freqs"],parsed_args["pop_tags"],
+        parsed_args["eff_perm"],parsed_args["af_perm"],parsed_args["resample_n"],parsed_args["decompose"])
 end
 
 main()
