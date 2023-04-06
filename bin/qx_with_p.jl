@@ -28,7 +28,7 @@ function parseCommandLine()
             arg_type = String
             required = true
         "--matched_snps","-m"
-            help = "file with list of IDs of matched SNPs for run. if left empty, script will match SNPs itself using --snps option"
+            help = "file with list of IDs of matched SNPs for run"
             arg_type =  String
             default = "matched_snps.txt"
         "--pop_tags","-t"
@@ -40,7 +40,7 @@ function parseCommandLine()
             help = "if you want to calculate p-value by resampling effect sizes"
             action=:store_true
         "--af_perm"
-            help = "if you want to calculate p-value by resampling allele frequencies"
+            help = "if you want to calculate p-value by resampling allele frequencies. Can't be paired with PCA option"
             action=:store_true
         "--resample_n","-r"
             help = "number of times to resample for p-value"
@@ -49,9 +49,23 @@ function parseCommandLine()
         "--gene","-g"
             help = "gene id for this run"
             arg_type = String
+            required = true
         "--decompose"
             help = "if you want to output the Fst and LD-based decomposition terms"
             action=:store_true
+        "--PCA"
+            help = "if you want to calculate Qx using PCs instead of population covariances"
+            action = :store_true
+        "--eigenvecs","-e"
+            help = "path to stored population eigenvectors. for PCA option."
+            arg_type = String
+        "--eigenvals","-l"
+            help = "path to stored population eigenvalues. for PCA option."
+            arg_type = String
+        "--N_PCs"
+            help = "Number of PCs to use"
+            arg_type= Int64
+            default=10
     end
     return parse_args(s)
 end
@@ -179,6 +193,24 @@ function pullFreqs(snps::Array{String,1},frq_path::String,pop_tags::Array{String
     return freqs,indices
 end
 
+function readPCA(vec_path::String,val_path::String,nPCs::Int64,num_pops::Int64)
+    vals = repeat([0.0],nPCs)
+    vecs = repeat([0.0],num_pops,nPCs)
+    open(val_path) do inf
+        for line in enumerate(eachline(inf))
+            if line[1] > nPCs break end
+            vals[line[1]] = parse(Float64,line[2])
+        end
+    end
+
+    open(vec_path) do inf
+        for line in enumerate(eachline(inf))
+            vecs[line[1],:] = parse.(Float64,split(line[2],"\t"))[1:nPCs]
+        end
+    end
+    return vecs,vals
+end
+
 # returns matrix to center and scale Z matrix of AFs
 function centerScaleAFMatrix(M::Int64)
     T = fill(-1/M,(M-1,M))# M-1 x M matrix. (M-1)/M on diagonal,-1/M everywhere else
@@ -194,7 +226,7 @@ function scalingFactor(betas::Transpose{Float64,Array{Float64,1}},freqs::Transpo
     return VA
 end
 
-# returns M by M positive definite matrix describing the correlation structure of allele frequencies across populations relative to the mean/ancestral frequency.
+# returns M-1 by M-1 positive definite matrix describing the correlation structure of allele frequencies across populations relative to the mean/ancestral frequency.
 function neutralCovarianceMatrix(freqs::Array{Float64,2})
     T = centerScaleAFMatrix(size(freqs)[1])
     S = fill(0.0, (size(freqs)[2],size(freqs)[2]))
@@ -256,8 +288,18 @@ function QxDecomp(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Tran
     return fst_comp, ld_comp
 end
 
+function QxPCA(snp_betas::Transpose{Float64,Array{Float64,1}},snp_freqs::Transpose{Float64,Array{Float64,2}},U_mat::Array{Float64,2},eigenvals::Array{Float64,1})
+    z = [2*sum(snp_betas * snp_freqs[:,i]) for i in 1:size(snp_freqs)[2]] #mean genetic values for each pop
+    va = scalingFactor(snp_betas,snp_freqs)
+    qx = 0.0
+    for m in 1:length(eigenvals)
+        qx += ((transpose(z .- mean(z))*U_mat[:,m])^2)/(2*eigenvals[m]*va)
+    end
+    return qx
+end
+
 function readInput(gene::String,db_path::String,match_path::String,freq_path::String,pop_tags::Array{String,1},
-        eff_perm::Bool,af_perm::Bool,res_n::Int64,decomp::Bool)
+        eff_perm::Bool,af_perm::Bool,res_n::Int64,decomp::Bool,pca::Bool,vec_file::String,val_file::String,nPCs::Int64)
     outdir = "$(splitext(db_path)[1])/"
     if !isdir(outdir) mkdir(outdir) end
     genes,all_eff_sizes = parseDB(db_path) # Dict{gene => [(id,weight)]}
@@ -278,21 +320,41 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
     betas = parse.(Float64,["$(snp[2])" for snp in genes[gene]])
     deleteat!(betas,no_id)
 
-    matched_snps = readMatch(match_path,gene)
-    all_freqs,zero_inds = pullFreqs(vcat(snp_arr,matched_snps),freq_path,pop_tags)
+    all_freqs = Array{Float64,2}[]
+    zero_inds = Array{Int64,1}[]
+    if pca
+        all_freqs,zero_inds = pullFreqs(snp_arr,freq_path,pop_tags)
+    else
+        matched_snps = readMatch(match_path,gene)
+        all_freqs,zero_inds = pullFreqs(vcat(snp_arr,matched_snps),freq_path,pop_tags)
+    end
     all_freqs = all_freqs[:,setdiff(1:end, zero_inds)] #remove all-zero-freq SNPs. dims are pops x loci
 
     snp_betas = transpose(betas[setdiff(1:end,zero_inds[findall(<(length(betas)+1),zero_inds)])]) #dims: 1 x loci
     num_snps = length(snp_betas)
 
     snp_freqs = transpose(all_freqs[1:end,1:num_snps]) #dims: loci x pops
-    matched_freqs = all_freqs[1:end,(num_snps+1):end]
 
-    f = neutralCovarianceMatrix(matched_freqs)
-    c = cholesky(Hermitian(f)).L #was crashing initially due to rounding error in f making it look non-Hermitian
+    U_mat = Array{Float64,2}[]
+    eigenvals = Array{Float64,1}[]
+    if pca
+        U_mat,eigenvals = readPCA(vec_file,val_file,nPCs,length(pop_tags))
+    else
+        matched_freqs = all_freqs[1:end,(num_snps+1):end]
+
+        f = neutralCovarianceMatrix(matched_freqs)
+
+        c= LowerTriangular{Float64,Array{Float64,2}}[]
+        c = cholesky(Hermitian(f)).L #was crashing initially due to rounding error in f making it look non-Hermitian
+    end
     qx_path = "$(outdir)$(gene)_qx.txt"
     open(qx_path,"w") do outf
-        qx = Qx(snp_betas,snp_freqs,c)
+        qx=0.0
+        if pca
+            qx = QxPCA(snp_betas,snp_freqs,U_mat,eigenvals)
+        else
+            qx = Qx(snp_betas,snp_freqs,c)
+        end
         outline = "$(gene)\t$(num_snps)\t$qx"
 
         if decomp
@@ -308,7 +370,11 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
             for samp in 1:res_n
                 rand_betas = sample(RNG,all_eff_sizes,num_snps)
                 rand_betas = rand_betas .* transpose(signs)
-                rand_qx[samp] = Qx(transpose(rand_betas[:]),snp_freqs,c)
+                if pca
+                    rand_qx[samp] = QxPCA(transpose(rand_betas[:]),snp_freqs,U_mat,eigenvals)
+                else
+                    rand_qx[samp] = Qx(transpose(rand_betas[:]),snp_freqs,c)
+                end
             end
             pval = length(filter(x-> x >= qx,rand_qx))/res_n
             if pval < 1/(res_n/10) #if it's a very small p-value, give it an order of magnitude more precision
@@ -317,7 +383,11 @@ function readInput(gene::String,db_path::String,match_path::String,freq_path::St
                 for samp in (res_n+1):prec_n
                     rand_betas = sample(RNG,all_eff_sizes,num_snps)
                     rand_betas = rand_betas .* transpose(signs)
-                    rand_qx[samp] = Qx(transpose(rand_betas[:]),snp_freqs,c)
+                    if pca
+                        rand_qx[samp] = QxPCA(transpose(rand_betas[:]),snp_freqs,U_mat,eigenvals)
+                    else
+                        rand_qx[samp] = Qx(transpose(rand_betas[:]),snp_freqs,c)
+                    end
                 end
                 pval = length(filter(x-> x >= qx,rand_qx))/prec_n
             end
@@ -355,7 +425,8 @@ end
 function main()
     parsed_args = parseCommandLine()
     readInput(parsed_args["gene"],parsed_args["db"],parsed_args["matched_snps"],parsed_args["pop_freqs"],parsed_args["pop_tags"],
-        parsed_args["eff_perm"],parsed_args["af_perm"],parsed_args["resample_n"],parsed_args["decompose"])
+        parsed_args["eff_perm"],parsed_args["af_perm"],parsed_args["resample_n"],parsed_args["decompose"],parsed_args["PCA"],
+        parsed_args["eigenvecs"],parsed_args["eigenvals"],parsed_args["N_PCs"])
 end
 
 main()

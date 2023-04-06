@@ -11,8 +11,8 @@ using LinearAlgebra,NMF
 using Plots,Seaborn
 
 COLOURS = ["#b93e0f","#a1c6d8","#5f3912","#feae02","#6b878f","#c6d737","#171b17","#fe8515","#b7c1c2","#9a5611"]
-Seaborn.set(style="white", palette="muted")
-HEADER = ["gene","tissue","qx","genename"]
+# Seaborn.set(style="white", palette="muted")
+HEADER = ["gene","tissue","qx","chr","start","end","genename"]
 ENV["GKSwstype"] = "100" #fixes a segfault bug in GR backend for Plots.jl: https://discourse.julialang.org/t/generation-of-documentation-fails-qt-qpa-xcb-could-not-connect-to-display/60988
 
 function parseCommandLine()
@@ -57,13 +57,21 @@ function calcP(chi_stat::Array{Float64,1},deg_f::Int64)
         gc_p <- pchisq(chi_stat/lambda, df=deg_f, lower.tail=F)  #gc-correction
         # print(length(chi_stat))
         # print(length(chi_stat[!is.na(chi_stat)]))
-        params <- fitdist(chi_stat[!is.na(chi_stat)],distr= "gamma",lower=c(0,0),start=list(shape=1,rate=1)) #fit gamma dist to qx
+        tmp <- chi_stat[!is.na(chi_stat)]
+        params <- fitdist(tmp,distr= "gamma",lower=c(0,0),start=list(shape=1,rate=1)) #fit gamma dist to qx
+        print(params)
         gamma_p <- pgamma(chi_stat, shape=params$estimate[1], rate=params$estimate[2], lower.tail=FALSE) # gamma p
+        p95 <- quantile(tmp, 0.95)
+        p05 <- quantile(tmp, 0.05)
+        params <- fitdist(tmp[which(tmp<=p95 & tmp>=p05)],distr= "gamma",lower=c(0,0),start=list(shape=1,rate=1)) #fit gamma dist to qx minus top and bottom 5%
+        print(params)
+        trunc_gamma <- pgamma(chi_stat, shape=params$estimate[1], rate=params$estimate[2], lower.tail=FALSE) # gamma p
     """
     @rget raw_p
     @rget gc_p
     @rget gamma_p
-    return raw_p,gc_p,gamma_p
+    @rget trunc_gamma
+    return raw_p,gc_p,gamma_p,trunc_gamma
 end
 
 # returns bonferroni multiple testing correction significance threshold
@@ -153,7 +161,7 @@ end
 function summaryStat(df::DataFrames.DataFrame,qx_path::String,deg_f::Int64)
     println("Qx $(summarystats(filter(!isnan,df[!,:qx])))")
     println("missing: $(length(filter(isnan,df[!,:qx])))")
-    df[:,:raw_pval],df[:,:gc_pval],df[:,:gamma_p] = calcP(df[!,:qx],deg_f)
+    df[:,:raw_pval],df[:,:gc_pval],df[:,:gamma_p],df[:,:trunc_gamma] = calcP(df[!,:qx],deg_f)
     CSV.write("$(splitext(qx_path)[1])_pvals.txt",df;delim="\t")
 
 # calculate stats for qq plot
